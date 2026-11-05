@@ -8,8 +8,8 @@ composeBom = "2025.10.00"
 materialIconsExtended = "1.7.8"
 camerax = "1.5.1"
 coroutines = "1.10.2"
-# Última 0.10.x publicada por Google (se fijará la versión exacta tras la primera compilación).
-mediapipe = "0.10.+"
+# Versión comprobada en la compilación de la Fase 2 (5 nov 2026).
+mediapipe = "0.10.35"
 junit = "4.13.2"
 
 [libraries]

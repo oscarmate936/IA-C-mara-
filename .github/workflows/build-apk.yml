@@ -52,10 +52,6 @@ jobs:
           chmod +x gradlew
           ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleRelease
 
-      - name: Versión de MediaPipe usada
-        continue-on-error: true
-        run: ./gradlew --no-daemon -q :app:dependencyInsight --dependency com.google.mediapipe:tasks-vision --configuration releaseRuntimeClasspath | head -5
-
       - name: Preparar el archivo
         run: |
           mkdir -p out

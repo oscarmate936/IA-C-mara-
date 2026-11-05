@@ -210,12 +210,9 @@ class CameraEngine(private val context: Context) {
         captureMetadata.clear()
 
         val capture = buildCapture(current.flash)
-        val currentAnalyzer = analyzer
-        val analysisAllowed = currentAnalyzer != null && (
-            mode == PhotoMode.FOTO || ext == null ||
-                runCatching { ext.isImageAnalysisSupported(base, mode.extensionMode) }.getOrDefault(false)
-            )
-        val analysis = if (analysisAllowed && currentAnalyzer != null) buildAnalysis(currentAnalyzer) else null
+        val analysisAllowed = mode == PhotoMode.FOTO || ext == null ||
+            runCatching { ext.isImageAnalysisSupported(base, mode.extensionMode) }.getOrDefault(false)
+        val analysis = analyzer?.takeIf { analysisAllowed }?.let { buildAnalysis(it) }
 
         cameraProvider.unbindAll()
         var analysisActive = analysis != null
