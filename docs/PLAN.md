@@ -474,6 +474,11 @@ abiertos.
 
 ## 11. Capa 4 — Posprocesado con IA
 
+> **Cambio de rumbo (Fase 5):** las galerías de Samsung y Honor ya incluyen borrador de objetos, mejora manual,
+> desenfoque de fondo posterior y filtros. La Fase 5 se centra en lo que solo la cámara puede hacer porque tiene la
+> ráfaga, los sensores y el análisis de la escena en el momento del disparo (ver la hoja de ruta, §17). La mejora
+> automática sí se mantiene: se aplica sola al disparar, con la receta de la escena detectada.
+
 ### 11.1 Mejora automática (sin tocar nada)
 
 Tras cada foto se aplica una "receta" según la escena y tu estilo: balance de blancos, curvas, contraste local
@@ -633,7 +638,7 @@ Cada fase termina con un **APK instalable** para probar en tus dos móviles.
 | **2 — Percepción en vivo** | Planificador de IA, escena, sujeto, caras, pose, histograma y luz; enfoque y exposición automáticos sobre el sujeto; uso de extensiones | **APK v0.2** | Reconoce ≥ 12 tipos de escena y enfoca solo al sujeto. |
 | **3 — Coach de composición** | Motor de composición, líneas guía dinámicas, flechas, puntuación, consejos por escena, posición del sol, disparo inteligente, Director IA por reglas | **APK v0.3** | Te guía hasta un encuadre con puntuación alta. |
 | **4 — Computacional** | Ráfaga + mejor frame, HDR propio, noche multiframe, modo Pro (Ultra HDR descartado: ninguno de los dos móviles lo admite; super-resolución y RAW pasan a la Fase 5) | **APK v0.4** | Mejora visible en contraluz, noche y zoom frente a una foto simple. |
-| **5 — Posprocesado IA** | Mejora automática, Luz IA, ruido, retrato posterior, borrador, zoom IA con super-resolución multiframe, RAW (DNG) en el modo Pro, recorte inteligente, cielo, estilos; editor no destructivo | **APK v0.5** | Editor completo funcionando en ambos móviles. |
+| **5 — Lo que solo la cámara puede hacer** | Mejora automática por escena al disparar (original + mejorada), enderezado y perspectiva con el sensor del disparo, recorte según la guía del coach, todos con los ojos abiertos en fotos de grupo, quitar gente que pasa, larga exposición, zoom con más detalle usando varias fotos, RAW (DNG) en PRO. Las herramientas que ya traen las galerías de Samsung y Honor (borrador, desenfoque posterior, filtros) no se repiten | **APK v0.5** | Funciones que la galería no puede hacer, funcionando en ambos móviles. |
 | **6 — Fotógrafo veterano** | Coach experto completo: base de reglas, biblioteca de frases, crítica del fotógrafo, explicación de decisiones, corrección de hábitos, intenciones de edición | **APK v0.6** | Explica cada foto y da consejos útiles, todo sin conexión. |
 | **7 — Aprendizaje** | Registro de eventos, "Tu estilo", bandido contextual, 👍/👎, conservación de lo aprendido entre versiones | **APK v0.7** | La mejora automática se adapta a tus gustos tras ~50 fotos. |
 | **8 — Pulido** | Optimización de velocidad, temperatura y batería en el S22+ y el Honor; estabilidad; ajuste fino de cada modelo | **APK v1.0** | Fluida, estable y sin calentamiento excesivo. |

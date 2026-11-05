@@ -139,8 +139,8 @@ object PhotoSaver {
         ExifInterface.TAG_FLASH,
     )
 
-    private fun newEntry(context: Context): Uri? {
-        val name = "IA_" + SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(System.currentTimeMillis())
+    private fun newEntry(context: Context, suffix: String = ""): Uri? {
+        val name = "IA_" + SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(System.currentTimeMillis()) + suffix
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
@@ -180,8 +180,12 @@ object PhotoSaver {
         return uri
     }
 
+    /** Borra una foto guardada por la app (para "solo la mejorada"). */
+    fun delete(context: Context, uri: Uri): Boolean =
+        runCatching { context.contentResolver.delete(uri, null, null) > 0 }.getOrDefault(false)
+
     /**
-     * Guarda una foto procesada (noche, HDR). Los píxeles están en la orientación del sensor:
+     * Guarda una foto procesada (noche, HDR, mejorada). Los píxeles están en la orientación indicada:
      * el giro se indica en el EXIF, igual que hace la cámara. Se copian los datos de la foto de referencia.
      */
     fun saveProcessed(
@@ -190,8 +194,9 @@ object PhotoSaver {
         rotationDegrees: Int,
         referenceJpeg: ByteArray?,
         software: String,
+        suffix: String = "",
     ): Uri? {
-        val uri = newEntry(context) ?: return null
+        val uri = newEntry(context, suffix) ?: return null
         context.contentResolver.openOutputStream(uri)?.use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
         context.contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
             val exif = ExifInterface(pfd.fileDescriptor)

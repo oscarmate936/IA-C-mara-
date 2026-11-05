@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Straighten
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
@@ -103,6 +102,7 @@ import com.iacamara.app.camera.Processing
 import com.iacamara.app.perception.Condition
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
@@ -113,6 +113,11 @@ import com.iacamara.app.director.TipAction
 import com.iacamara.app.perception.MotionSensor
 import com.iacamara.app.perception.NRect
 import com.iacamara.app.perception.PerceptionAnalyzer
+import com.iacamara.app.capture.ShotInfo
+import com.iacamara.app.imaging.CropHint
+import com.iacamara.app.perception.FrameMath
+import com.iacamara.app.perception.SceneType
+import kotlin.math.asin
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
@@ -120,7 +125,7 @@ import kotlin.math.sqrt
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun CameraScreen(onOpenDiagnostics: () -> Unit) {
+fun CameraScreen(onOpenSettings: () -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val haptics = LocalHapticFeedback.current
@@ -165,6 +170,8 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
         engine.setAnalyzer(analyzer)
         engine.eyeScorer = { bitmap -> analyzer.eyesOpenScore(bitmap) }
         engine.aestheticScorer = { bitmap -> analyzer.aestheticScore(bitmap) }
+        engine.enhancer.faceFinder = { bitmap -> analyzer.findFaces(bitmap) }
+        engine.enhancer.aestheticScorer = { bitmap -> analyzer.aestheticScore(bitmap) }
         engine.start(lifecycleOwner, previewView.surfaceProvider)
     }
     DisposableEffect(Unit) {
@@ -238,9 +245,12 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
 
     // Nivel (giroscopio/gravedad).
     val levelSensor = remember { LevelSensor(context.applicationContext) }
-    val levelFlow = remember(showLevel) { if (showLevel) levelSensor.readings() else emptyFlow() }
+    // Con la IA activa el sensor se lee siempre: la mejora automática endereza con el giro del disparo.
+    val levelFlow = remember(showLevel, iaEnabled) {
+        if (showLevel || iaEnabled) levelSensor.readings() else emptyFlow()
+    }
     val levelState: State<LevelReading?> = levelFlow.collectAsState(initial = null)
-    val isLevel by remember { derivedStateOf { levelState.value?.isLevel == true } }
+    val isLevel by remember { derivedStateOf { showLevel && levelState.value?.isLevel == true } }
     LaunchedEffect(isLevel) {
         if (isLevel) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
     }
@@ -262,6 +272,18 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 flashAlpha.animateTo(0f, tween(300))
             }
             // El Director IA decide la técnica: noche, HDR, mejor de una ráfaga o foto normal.
+            // Junto a la foto va lo que sabía la cámara (escena, giro, guía) para la mejora automática.
+            val level = levelState.value
+            val front = currentState.lens == Lens.FRONT
+            val p = perception.takeIf { iaEnabled }
+            val shot = ShotInfo(
+                scene = p?.scene ?: SceneType.GENERAL,
+                iso = p?.meta?.iso,
+                rollDeg = level?.takeIf { !it.isFlat }?.deviationDegrees,
+                pitchDeg = level?.let { Math.toDegrees(asin((-it.nz).toDouble().coerceIn(-1.0, 1.0))).toFloat() },
+                crop = guidance?.takeIf { iaEnabled }?.let { cropHint(it, front, deviceDegrees) },
+                front = front,
+            )
             engine.capture(
                 CaptureDirector.plan(
                     mode = currentState.mode,
@@ -269,6 +291,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                     iaEnabled = iaEnabled,
                     flashOn = currentState.flash == FlashSetting.ON,
                 ),
+                shot,
             )
         }
     }
@@ -320,7 +343,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 // La mirada se mide sin espejo; el usuario ve la frontal en espejo.
                 gazeX = mainFace?.gazeX?.let { if (front) -it else it },
                 saliency = p.saliency,
-                rollDegrees = level?.takeIf { !it.isFlat }?.deviationDegrees,
+                rollDegrees = level?.takeIf { showLevel && !it.isFlat }?.deviationDegrees,
                 horizonY = p.light?.horizonY,
                 interestingSky = (p.light?.skyBlue ?: 0f) >= 0.25f || (p.light?.warmTop ?: 0f) >= 0.2f,
                 highlightClip = p.light?.highlightClip ?: 0f,
@@ -486,10 +509,10 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 },
             )
             RotatingIconButton(
-                icon = Icons.Outlined.Info,
-                description = "Diagnóstico de cámara",
+                icon = Icons.Filled.Settings,
+                description = "Ajustes",
                 rotation = iconRotation,
-                onClick = onOpenDiagnostics,
+                onClick = onOpenSettings,
             )
         }
 
@@ -565,6 +588,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                         if (smartShutter && iaEnabled) InfoChip("AUTO-DISPARO")
                         val plan = CaptureDirector.plan(state.mode, perception, iaEnabled, state.flash == FlashSetting.ON)
                         if (plan.strategy != CaptureStrategy.SINGLE && state.processing == null) InfoChip(plan.description)
+                        if (state.enhancing > 0) InfoChip("✨ Mejorando…")
                     }
                     if (iaActive && currentPerception != null) {
                         SceneBadge(perception = currentPerception, reason = direction?.reason)
@@ -848,4 +872,17 @@ private fun ProcessingOverlay(processing: Processing, modifier: Modifier = Modif
             Text("Procesando ${(processing.progress * 100).toInt()} %", color = Color.White, fontSize = 13.sp)
         }
     }
+}
+
+/**
+ * Del coach al revelado: dónde estaba el sujeto y dónde lo quería la guía, en la foto derecha
+ * (vista del usuario) en vez del encuadre vertical de la pantalla.
+ */
+private fun cropHint(g: Guidance, front: Boolean, deviceDegrees: Int): CropHint? {
+    val subject = g.subjectCenter ?: return null
+    val target = g.target ?: return null
+    fun view(p: Pair<Float, Float>) = FrameMath.rotate(if (front) 1f - p.first else p.first, p.second, deviceDegrees)
+    val (sx, sy) = view(subject)
+    val (tx, ty) = view(target)
+    return CropHint(sx, sy, tx, ty)
 }

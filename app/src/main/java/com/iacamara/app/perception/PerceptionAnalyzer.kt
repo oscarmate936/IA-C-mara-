@@ -656,6 +656,14 @@ class PerceptionAnalyzer(
         return open / shapes.size.toFloat()
     }
 
+    /** Caras en una foto reducida y derecha (para la mejora automática). Coordenadas 0..1. */
+    @Synchronized
+    fun findFaces(bitmap: Bitmap): List<NRect> = runCatching {
+        val w = bitmap.width.toFloat()
+        val h = bitmap.height.toFloat()
+        faceDetector?.detect(BitmapImageBuilder(bitmap).build())?.detections().orEmpty().map { normalize(it.boundingBox(), w, h) }
+    }.getOrDefault(emptyList())
+
     /** Para elegir la mejor foto de una ráfaga: nota de estética (NIMA) de una foto reducida y derecha. */
     @Synchronized
     fun aestheticScore(bitmap: Bitmap): Float? = runCatching { aestheticScorer?.score(bitmap) }.getOrNull()
@@ -734,7 +742,8 @@ class PerceptionAnalyzer(
 /**
  * Un modelo de MediaPipe que intenta usar la GPU y vuelve al procesador si falla. La primera
  * ejecución en GPU va con la marca de protección: si el controlador de la gráfica cierra la app,
- * al volver a abrirla se usa el procesador.
+ * al volver a abrirla se usa el procesador. Además compara la velocidad: si en este móvil la GPU no es
+ * más rápida que el procesador con este modelo, se queda con el procesador.
  */
 private class MpModel<T : AutoCloseable>(
     private val key: String,
@@ -746,14 +755,30 @@ private class MpModel<T : AutoCloseable>(
         private set
     private var verified = false
 
+    // Comparación de velocidad GPU / procesador (las primeras ejecuciones de calentamiento no cuentan).
+    private var decided = false
+    private var gpuMs = 0f
+    private var gpuRuns = 0
+    private var cpuTrial: T? = null
+    private var cpuMs = 0f
+    private var cpuRuns = 0
+
     val label: String get() = if (onGpu) "GPU" else "CPU"
 
     fun load() {
+        if (store.chosen(key) == Backend.CPU) {
+            // Ya se vio en este móvil que el procesador va mejor (o la GPU falla).
+            model = factory(Delegate.CPU)
+            onGpu = false
+            return
+        }
         if (!store.disabled && !store.isBroken(key, Backend.GPU)) {
             val gpu = runCatching { store.guarded(key, Backend.GPU) { factory(Delegate.GPU) } }
             gpu.getOrNull()?.let {
                 model = it
                 onGpu = true
+                // Si ya se comparó antes y ganó la GPU, no se repite la comparación.
+                decided = store.chosen(key) == Backend.GPU
                 return
             }
             store.markBroken(key, Backend.GPU, gpu.exceptionOrNull()?.let { "${it.javaClass.simpleName}: ${it.message ?: ""}" } ?: "")
@@ -767,10 +792,7 @@ private class MpModel<T : AutoCloseable>(
         val m = model ?: return null
         if (onGpu && !verified) {
             return try {
-                store.guarded(key, Backend.GPU) { block(m) }.also {
-                    verified = true
-                    store.choose(key, Backend.GPU)
-                }
+                store.guarded(key, Backend.GPU) { block(m) }.also { verified = true }
             } catch (e: Throwable) {
                 Log.w("Percepcion", "$key no funciona en la GPU: se usa el procesador", e)
                 store.markBroken(key, Backend.GPU, "${e.javaClass.simpleName}: ${e.message ?: ""}")
@@ -782,11 +804,59 @@ private class MpModel<T : AutoCloseable>(
                 cpu?.let { runCatching { block(it) }.getOrNull() }
             }
         }
+        if (onGpu && !decided) return compare(m, block)
         return block(m)
+    }
+
+    /** Unas cuantas ejecuciones en GPU y otras tantas en el procesador; se queda la más rápida. */
+    private fun <R> compare(gpuModel: T, block: (T) -> R): R {
+        val trial = cpuTrial
+        if (trial == null) {
+            val t0 = System.nanoTime()
+            val r = block(gpuModel)
+            gpuRuns++
+            if (gpuRuns > WARMUP) gpuMs += (System.nanoTime() - t0) / 1e6f
+            if (gpuRuns >= WARMUP + SAMPLES) {
+                cpuTrial = runCatching { factory(Delegate.CPU) }.getOrNull()
+                if (cpuTrial == null) finish(keepGpu = true)
+            }
+            return r
+        }
+        val t0 = System.nanoTime()
+        val r = block(trial)
+        cpuRuns++
+        if (cpuRuns > WARMUP) cpuMs += (System.nanoTime() - t0) / 1e6f
+        if (cpuRuns >= WARMUP + SAMPLES) {
+            // La GPU tiene que ganar con claridad para quedarse.
+            finish(keepGpu = gpuMs / SAMPLES < 0.85f * (cpuMs / SAMPLES))
+        }
+        return r
+    }
+
+    private fun finish(keepGpu: Boolean) {
+        decided = true
+        val trial = cpuTrial
+        cpuTrial = null
+        if (keepGpu) {
+            runCatching { trial?.close() }
+            store.choose(key, Backend.GPU)
+        } else if (trial != null) {
+            runCatching { model?.close() }
+            model = trial
+            onGpu = false
+            store.choose(key, Backend.CPU)
+        }
     }
 
     fun close() {
         runCatching { model?.close() }
+        runCatching { cpuTrial?.close() }
         model = null
+        cpuTrial = null
+    }
+
+    private companion object {
+        const val WARMUP = 3
+        const val SAMPLES = 10
     }
 }

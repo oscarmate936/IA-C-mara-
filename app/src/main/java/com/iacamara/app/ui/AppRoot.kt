@@ -32,8 +32,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.iacamara.app.ui.camera.CameraScreen
 import com.iacamara.app.ui.diagnostics.DiagnosticsScreen
+import com.iacamara.app.ui.settings.SettingsScreen
 
-private enum class Screen { CAMERA, DIAGNOSTICS }
+private enum class Screen { CAMERA, SETTINGS, DIAGNOSTICS }
 
 @Composable
 fun AppRoot() {
@@ -61,8 +62,12 @@ fun AppRoot() {
                 )
             },
         )
-        screen == Screen.DIAGNOSTICS -> DiagnosticsScreen(onBack = { screen = Screen.CAMERA })
-        else -> CameraScreen(onOpenDiagnostics = { screen = Screen.DIAGNOSTICS })
+        screen == Screen.DIAGNOSTICS -> DiagnosticsScreen(onBack = { screen = Screen.SETTINGS })
+        screen == Screen.SETTINGS -> SettingsScreen(
+            onBack = { screen = Screen.CAMERA },
+            onOpenDiagnostics = { screen = Screen.DIAGNOSTICS },
+        )
+        else -> CameraScreen(onOpenSettings = { screen = Screen.SETTINGS })
     }
 }
 

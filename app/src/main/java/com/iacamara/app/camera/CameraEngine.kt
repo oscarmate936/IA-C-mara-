@@ -33,6 +33,8 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.iacamara.app.capture.CapturedFrame
+import com.iacamara.app.capture.PhotoEnhancer
+import com.iacamara.app.capture.ShotInfo
 import com.iacamara.app.capture.JpegFrameSource
 import com.iacamara.app.capture.PhotoSaver
 import com.iacamara.app.capture.captureJpeg
@@ -41,6 +43,9 @@ import com.iacamara.app.director.CapturePlan
 import com.iacamara.app.director.CaptureStrategy
 import com.iacamara.app.imaging.BurstPipeline
 import com.iacamara.app.perception.CaptureMetadata
+import com.iacamara.app.settings.AppPrefs
+import com.iacamara.app.settings.EnhanceMode
+import kotlinx.coroutines.asCoroutineDispatcher
 import com.iacamara.app.util.await
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -133,6 +138,8 @@ data class CameraUiState(
     val processing: Processing? = null,
     val proRanges: ProRanges? = null,
     val pro: ProSettings? = null,
+    /** Fotos que se están mejorando en segundo plano. */
+    val enhancing: Int = 0,
 )
 
 /**
@@ -170,6 +177,11 @@ class CameraEngine(private val context: Context) {
     private var analyzer: ImageAnalysis.Analyzer? = null
     private val analysisExecutor = Executors.newSingleThreadExecutor()
 
+    /** Mejora automática (Fase 5): una foto cada vez, en segundo plano. */
+    val enhancer = PhotoEnhancer(context)
+    private val prefs = AppPrefs(context)
+    private val enhanceDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+
     /** Se debe llamar antes de start(). */
     fun setAnalyzer(analyzer: ImageAnalysis.Analyzer?) {
         this.analyzer = analyzer
@@ -205,6 +217,7 @@ class CameraEngine(private val context: Context) {
         stop()
         scope.cancel()
         analysisExecutor.shutdown()
+        enhanceDispatcher.close()
     }
 
     private fun baseSelector(lens: Lens): CameraSelector =
@@ -369,17 +382,45 @@ class CameraEngine(private val context: Context) {
 
     // --- Fotografía computacional (Fase 4) ---
 
-    /** Dispara con la técnica que ha decidido el Director IA. */
-    fun capture(plan: CapturePlan) {
+    /**
+     * Dispara con la técnica que ha decidido el Director IA.
+     * @param shot lo que sabía la cámara al disparar, para la mejora automática (null = sin mejora).
+     */
+    fun capture(plan: CapturePlan, shot: ShotInfo? = null) {
         if (plan.strategy == CaptureStrategy.SINGLE) {
-            takePhoto()
+            takePhoto(shot)
             return
         }
         if (_state.value.capturing) return
-        scope.launch { runComputational(plan) }
+        scope.launch { runComputational(plan, shot) }
     }
 
-    private suspend fun runComputational(plan: CapturePlan) {
+    /**
+     * Crea la versión mejorada de una foto recién guardada (en segundo plano). Solo en los modos de la
+     * app: los del fabricante ya vienen procesados y en PRO manda el usuario.
+     */
+    private fun enhanceLater(original: Uri, shot: ShotInfo?, alreadyProcessed: Boolean, mode: PhotoMode) {
+        val choice = prefs.enhance
+        if (shot == null || choice == EnhanceMode.NO || mode.vendor || mode == PhotoMode.PRO) return
+        val geometry = prefs.enhanceGeometry
+        _state.update { it.copy(enhancing = it.enhancing + 1) }
+        scope.launch {
+            try {
+                val improved = withContext(enhanceDispatcher) {
+                    runCatching { enhancer.enhance(original, shot, alreadyProcessed, geometry) }.getOrNull()
+                }
+                if (improved != null) {
+                    if (choice == EnhanceMode.SOLO_MEJORADA) withContext(Dispatchers.IO) { PhotoSaver.delete(context, original) }
+                    _state.update { it.copy(lastPhotoUri = improved) }
+                }
+            } finally {
+                _state.update { it.copy(enhancing = (it.enhancing - 1).coerceAtLeast(0)) }
+            }
+        }
+    }
+
+    private suspend fun runComputational(plan: CapturePlan, shot: ShotInfo?) {
+        val mode = _state.value.mode
         val capture = imageCapture ?: return
         _state.update { it.copy(capturing = true, processing = Processing(plan.description, 0f, capturingFrames = true)) }
         try {
@@ -410,6 +451,10 @@ class CameraEngine(private val context: Context) {
                 }
             }
             _state.update { it.copy(capturing = false, processing = null, lastPhotoUri = uri ?: it.lastPhotoUri) }
+            if (uri != null) {
+                val fused = plan.strategy == CaptureStrategy.NIGHT || plan.strategy == CaptureStrategy.HDR
+                enhanceLater(uri, shot, alreadyProcessed = fused, mode = mode)
+            }
         } catch (e: Throwable) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             _state.update { it.copy(capturing = false, processing = null, message = "No se pudo procesar la foto: ${e.message}") }
@@ -617,9 +662,10 @@ class CameraEngine(private val context: Context) {
 
     fun clearMessage() = _state.update { it.copy(message = null) }
 
-    fun takePhoto() {
+    fun takePhoto(shot: ShotInfo? = null) {
         val capture = imageCapture ?: return
         if (_state.value.capturing) return
+        val mode = _state.value.mode
         _state.update { it.copy(capturing = true) }
 
         val name = "IA_" + SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(System.currentTimeMillis())
@@ -637,6 +683,7 @@ class CameraEngine(private val context: Context) {
         capture.takePicture(options, mainExecutor, object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                 _state.update { it.copy(capturing = false, lastPhotoUri = output.savedUri ?: it.lastPhotoUri) }
+                output.savedUri?.let { enhanceLater(it, shot, alreadyProcessed = false, mode = mode) }
             }
 
             override fun onError(exception: ImageCaptureException) {

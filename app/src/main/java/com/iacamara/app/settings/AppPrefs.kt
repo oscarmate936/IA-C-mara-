@@ -33,6 +33,16 @@ class AppPrefs(context: Context) {
         get() = sp.getString(KEY_GUIDE, null)
         set(value) = sp.edit().putString(KEY_GUIDE, value).apply()
 
+    /** Qué guardar con la mejora automática (Fase 5). */
+    var enhance: EnhanceMode
+        get() = sp.getString(KEY_ENHANCE, null)?.let { n -> EnhanceMode.entries.firstOrNull { it.name == n } } ?: EnhanceMode.AMBAS
+        set(value) = sp.edit().putString(KEY_ENHANCE, value.name).apply()
+
+    /** En la versión mejorada: enderezar, corregir la perspectiva y recortar según la guía. */
+    var enhanceGeometry: Boolean
+        get() = sp.getBoolean(KEY_ENHANCE_GEOMETRY, true)
+        set(value) = sp.edit().putBoolean(KEY_ENHANCE_GEOMETRY, value).apply()
+
     private companion object {
         const val KEY_GRID = "rejilla"
         const val KEY_LEVEL = "nivel"
@@ -40,5 +50,14 @@ class AppPrefs(context: Context) {
         const val KEY_HISTOGRAM = "histograma"
         const val KEY_SMART_SHUTTER = "disparo_inteligente"
         const val KEY_GUIDE = "guia"
+        const val KEY_ENHANCE = "mejora"
+        const val KEY_ENHANCE_GEOMETRY = "mejora_geometria"
     }
+}
+
+/** Qué se guarda con la mejora automática. */
+enum class EnhanceMode(val label: String, val description: String) {
+    AMBAS("Guardar las dos", "La foto original y una copia mejorada"),
+    SOLO_MEJORADA("Solo la mejorada", "Se guarda la versión mejorada y se borra la original"),
+    NO("Desactivada", "Solo la foto original, como sale de la cámara"),
 }
