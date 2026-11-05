@@ -67,6 +67,7 @@ class PerceptionAnalyzer(
     private var slowdown = 1L
     private var lastObjects: List<DetectedObject> = emptyList()
     private var lastLabels: List<Pair<String, Float>> = emptyList()
+    private var animalEvidence = true
     private var lastSubjectCenter: Pair<Float, Float>? = null
     private var lastSubjectMs = 0L
     private var subjectSpeed = 0f
@@ -163,7 +164,18 @@ class PerceptionAnalyzer(
         val faces = faceDetector?.detect(mpImage)?.detections().orEmpty()
             .map { normalize(it.boundingBox(), w, h) }
 
-        // Objetos: ~10 veces por segundo.
+        // Tipo de escena: ~2 veces por segundo.
+        if (now - lastLabelsMs >= LABELS_INTERVAL_MS * slowdown) {
+            lastLabelsMs = now
+            val categories = classifier?.classify(mpImage)?.classificationResult()?.classifications()
+                ?.firstOrNull()?.categories().orEmpty()
+            lastLabels = categories.map { it.categoryName() to it.score() }
+            // En ImageNet las clases 0–397 son animales: sirve para confirmar lo que dice el detector.
+            animalEvidence = classifier == null ||
+                categories.any { it.index() < IMAGENET_LAST_ANIMAL && it.score() >= 0.05f }
+        }
+
+        // Objetos: ~6 veces por segundo (EfficientDet-Lite2, más preciso).
         if (now - lastObjectsMs >= OBJECTS_INTERVAL_MS * slowdown) {
             lastObjectsMs = now
             val raw = objectDetector?.detect(mpImage)?.detections().orEmpty().mapNotNull { d ->
@@ -171,15 +183,7 @@ class PerceptionAnalyzer(
                 DetectedObject(category.categoryName(), normalize(d.boundingBox(), w, h), category.score())
             }
             // Solo cuentan los objetos con suficiente seguridad y que se repiten en varios fotogramas.
-            lastObjects = objectTracker.update(raw.filter(DetectionFilter::accept))
-        }
-
-        // Tipo de escena: ~2 veces por segundo.
-        if (now - lastLabelsMs >= LABELS_INTERVAL_MS * slowdown) {
-            lastLabelsMs = now
-            lastLabels = classifier?.classify(mpImage)?.classificationResult()?.classifications()
-                ?.firstOrNull()?.categories().orEmpty()
-                .map { it.categoryName() to it.score() }
+            lastObjects = objectTracker.update(raw.filter { DetectionFilter.accept(it, animalEvidence) })
         }
 
         val subjectInModel = chooseSubject(faces, lastObjects)
@@ -287,12 +291,13 @@ class PerceptionAnalyzer(
     companion object {
         private const val TAG = "Percepcion"
         private const val FACE_MODEL = "models/blaze_face_short_range.tflite"
-        private const val OBJECT_MODEL = "models/efficientdet_lite0.tflite"
+        private const val OBJECT_MODEL = "models/efficientdet_lite2.tflite"
         private const val SCENE_MODEL = "models/efficientnet_lite0.tflite"
         private const val MIN_FRAME_INTERVAL_MS = 66L
-        private const val OBJECTS_INTERVAL_MS = 100L
+        private const val OBJECTS_INTERVAL_MS = 150L
         private const val LABELS_INTERVAL_MS = 450L
         private const val MOVING_THRESHOLD = 0.35f
+        private const val IMAGENET_LAST_ANIMAL = 398
 
         private val SPANISH = mapOf(
             "person" to "Persona", "dog" to "Perro", "cat" to "Gato", "bird" to "Pájaro", "horse" to "Caballo",

@@ -19,6 +19,16 @@ class ObjectTrackerTest {
     }
 
     @Test
+    fun animalSinConfirmarPorElClasificador() {
+        // El detector ve un perro, pero el clasificador no ve ningún animal: se exige casi certeza.
+        assertFalse(DetectionFilter.accept(DetectedObject("dog", box, 0.7f), animalEvidence = false))
+        assertTrue(DetectionFilter.accept(DetectedObject("dog", box, 0.7f), animalEvidence = true))
+        assertTrue(DetectionFilter.accept(DetectedObject("dog", box, 0.85f), animalEvidence = false))
+        // A los objetos que no son animales no les afecta.
+        assertTrue(DetectionFilter.accept(DetectedObject("cup", box, 0.5f), animalEvidence = false))
+    }
+
+    @Test
     fun unFalloDeUnFotogramaNoCuenta() {
         val tracker = ObjectTracker(confirmHits = 3)
         assertEquals(0, tracker.update(listOf(DetectedObject("dog", box, 0.9f))).size)

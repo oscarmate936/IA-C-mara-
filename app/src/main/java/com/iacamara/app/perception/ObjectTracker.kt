@@ -16,7 +16,14 @@ object DetectionFilter {
         else -> 0.45f
     }
 
-    fun accept(d: DetectedObject): Boolean = d.score >= minScore(d.label)
+    /**
+     * @param animalEvidence el clasificador de la imagen también ve algún animal. Si no lo ve,
+     * a un "animal" del detector se le exige casi certeza.
+     */
+    fun accept(d: DetectedObject, animalEvidence: Boolean = true): Boolean {
+        val min = if (d.label in SceneRules.ANIMALS && !animalEvidence) maxOf(minScore(d.label), 0.8f) else minScore(d.label)
+        return d.score >= min
+    }
 }
 
 /**

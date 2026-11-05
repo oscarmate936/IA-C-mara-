@@ -67,7 +67,7 @@ jobs:
             echo "::error::R8 ha eliminado Flogger: MediaPipe no podrá cargar los modelos."
             exit 1
           fi
-          for m in blaze_face_short_range efficientdet_lite0 efficientnet_lite0; do
+          for m in blaze_face_short_range efficientdet_lite2 efficientnet_lite0; do
             unzip -v out/IA-Camara.apk "assets/models/$m.tflite" | grep -q " Stored " || { echo "::error::El modelo $m falta o está comprimido"; exit 1; }
           done
           echo "Modelos presentes y sin comprimir."
