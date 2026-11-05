@@ -3,93 +3,144 @@
 > Una cámara para Android construida alrededor de la IA: analiza la escena antes de disparar,
 > decide sola la mejor configuración, te guía para encuadrar como un profesional,
 > aplica fotografía computacional al disparar y mejora la foto después.
-> Todo lo esencial funciona **gratis, sin internet y sin enviar tus fotos a ningún servidor**.
+> Todo el análisis de imagen funciona **gratis y sin internet en el móvil**.
 
-Nombre de trabajo: **IA Cámara** (se puede cambiar). Plataforma: **Android (APK)**.
-Fecha del plan: noviembre de 2026.
+| | |
+|---|---|
+| **Nombre** | IA Cámara (`com.iacamara.app`) |
+| **Plataforma** | Android, APK de **uso personal** |
+| **Móviles objetivo** | Samsung Galaxy S22+ · Honor Magic 8 Lite |
+| **Versión del plan** | 2 (noviembre de 2026) |
 
 ---
 
 ## Índice
 
-1. [Visión y principios](#1-visión-y-principios)
-2. [Cómo funciona la IA: las 4 capas](#2-cómo-funciona-la-ia-las-4-capas)
-3. [Arquitectura técnica](#3-arquitectura-técnica)
-4. [Tecnología elegida y por qué](#4-tecnología-elegida-y-por-qué)
-5. [Catálogo de modelos de IA gratuitos](#5-catálogo-de-modelos-de-ia-gratuitos)
-6. [Capa 1 — Percepción en vivo (antes del disparo)](#6-capa-1--percepción-en-vivo-antes-del-disparo)
-7. [Capa 2 — El "Director IA": decisión autónoma](#7-capa-2--el-director-ia-decisión-autónoma)
-8. [Coach de composición: líneas guía, ángulos y consejos](#8-coach-de-composición-líneas-guía-ángulos-y-consejos)
-9. [Capa 3 — Fotografía computacional al disparar](#9-capa-3--fotografía-computacional-al-disparar)
-10. [Capa 4 — Posprocesado con IA](#10-capa-4--posprocesado-con-ia)
-11. [IA generativa y conversacional (el "fotógrafo veterano")](#11-ia-generativa-y-conversacional-el-fotógrafo-veterano)
-12. [Aprendizaje continuo: cómo evoluciona la app](#12-aprendizaje-continuo-cómo-evoluciona-la-app)
-13. [Rendimiento, batería y niveles de dispositivo](#13-rendimiento-batería-y-niveles-de-dispositivo)
-14. [Experiencia de usuario y modos](#14-experiencia-de-usuario-y-modos)
-15. [Privacidad, licencias y límites reales](#15-privacidad-licencias-y-límites-reales)
-16. [Hoja de ruta por fases (hasta el APK v1.0)](#16-hoja-de-ruta-por-fases-hasta-el-apk-v10)
-17. [Qué añadir después (versión 2 y más)](#17-qué-añadir-después-versión-2-y-más)
-18. [Estructura del proyecto y cómo se generará el APK](#18-estructura-del-proyecto-y-cómo-se-generará-el-apk)
-19. [Decisiones pendientes](#19-decisiones-pendientes)
-20. [Fuentes consultadas](#20-fuentes-consultadas)
+1. [Visión, principios y alcance](#1-visión-principios-y-alcance)
+2. [Tus móviles: qué permite cada uno](#2-tus-móviles-qué-permite-cada-uno)
+3. [Cómo funciona la IA: las 4 capas](#3-cómo-funciona-la-ia-las-4-capas)
+4. [Arquitectura técnica](#4-arquitectura-técnica)
+5. [Tecnología elegida y por qué](#5-tecnología-elegida-y-por-qué)
+6. [Catálogo de modelos de IA gratuitos](#6-catálogo-de-modelos-de-ia-gratuitos)
+7. [Capa 1 — Percepción en vivo (antes del disparo)](#7-capa-1--percepción-en-vivo-antes-del-disparo)
+8. [Capa 2 — El "Director IA": decisión autónoma](#8-capa-2--el-director-ia-decisión-autónoma)
+9. [Coach de composición: líneas guía, ángulos y consejos](#9-coach-de-composición-líneas-guía-ángulos-y-consejos)
+10. [Capa 3 — Fotografía computacional al disparar](#10-capa-3--fotografía-computacional-al-disparar)
+11. [Capa 4 — Posprocesado con IA](#11-capa-4--posprocesado-con-ia)
+12. [El "fotógrafo veterano": IA de lenguaje híbrida](#12-el-fotógrafo-veterano-ia-de-lenguaje-híbrida)
+13. [Aprendizaje continuo: cómo evoluciona la app](#13-aprendizaje-continuo-cómo-evoluciona-la-app)
+14. [Rendimiento, batería y niveles de dispositivo](#14-rendimiento-batería-y-niveles-de-dispositivo)
+15. [Experiencia de usuario y modos](#15-experiencia-de-usuario-y-modos)
+16. [Privacidad, licencias y límites reales](#16-privacidad-licencias-y-límites-reales)
+17. [Hoja de ruta por fases (hasta el APK v1.0)](#17-hoja-de-ruta-por-fases-hasta-el-apk-v10)
+18. [Qué añadir después (versión 2 y más)](#18-qué-añadir-después-versión-2-y-más)
+19. [Estructura del proyecto y cómo se generará el APK](#19-estructura-del-proyecto-y-cómo-se-generará-el-apk)
+20. [Decisiones tomadas](#20-decisiones-tomadas)
+21. [Fuentes consultadas](#21-fuentes-consultadas)
 
 ---
 
-## 1. Visión y principios
+## 1. Visión, principios y alcance
 
-**Objetivo:** que cualquier persona, sin saber de fotografía, saque fotos de nivel profesional
-porque la app "piensa" como un fotógrafo con años de experiencia: mira la escena, decide la
-técnica, te dice dónde moverte y dispara en el momento justo.
+**Objetivo:** que puedas sacar fotos de nivel profesional sin saber de fotografía, porque la app
+"piensa" como un fotógrafo con años de experiencia: mira la escena, decide la técnica, te dice dónde
+moverte, dispara en el momento justo y deja la foto en su mejor versión.
 
-**Principios de diseño**
+### 1.1 Regla de alcance: solo fotografía
+
+Cada función de la app tiene que cumplir **al menos una** de estas dos condiciones:
+
+1. **Ayuda a tomar una foto mejor** (encuadre, ángulo, luz, enfoque, exposición, momento del disparo, técnica).
+2. **Mejora la calidad de la foto ya tomada** (nitidez, ruido, luz, color, rango dinámico, resolución,
+   composición, fondo, defectos).
+
+Si no cumple ninguna, **no entra en la app**. Esto también vale para la IA de lenguaje: cuando pidas
+consejos o mejoras, solo responde sobre fotografía y sobre la foto que estás haciendo o editando.
+
+**Fuera de alcance (no se hará):** escáner de documentos, lectura de texto (OCR), códigos QR, traducción,
+búsqueda u organización de la galería por contenido, redes sociales, estadísticas o "progreso" del usuario,
+lecciones o retos, vídeo, reloj inteligente, versión iPhone.
+
+### 1.2 Principios de diseño
 
 | Principio | Qué significa en la práctica |
 |---|---|
-| **IA primero** | Por defecto la app está en modo *Auto IA*: el usuario solo apunta; la IA decide modo, exposición, enfoque, lente, HDR, noche, ráfaga y edición. |
-| **En el dispositivo (on-device)** | Toda la IA esencial corre en el móvil (CPU/GPU/NPU). Gratis, sin conexión, sin límites de uso y privada. La nube es un extra opcional. |
-| **Enseña mientras ayuda** | Cada decisión se puede explicar ("he subido la exposición porque el sujeto está a contraluz"). El usuario aprende fotografía usando la app. |
-| **Nunca estorba** | Los consejos son breves, visuales y se pueden ocultar. El disparo siempre es instantáneo (cero retraso de obturador). |
-| **Natural, no artificial** | La mejora debe parecer una buena foto, no un filtro. Retoque de piel y efectos fuertes solo si el usuario los pide. |
-| **Siempre mejorando** | Aprende tus gustos localmente y recibe modelos y reglas mejores mediante actualizaciones. |
-| **No destructivo** | Se guarda la foto original + una "receta" de edición; cualquier mejora se puede deshacer. |
+| **IA primero** | Por defecto la app está en modo *Auto IA*: solo apuntas; la IA decide modo, lente, exposición, enfoque, HDR, noche, ráfaga y revelado. |
+| **Visión en el móvil** | Todo el análisis de imagen en tiempo real y las mejoras corren en el móvil (CPU/GPU/NPU): gratis, sin conexión y sin límites. |
+| **Explica lo que hace** | Cada decisión tiene un motivo visible ("contraluz → he subido la exposición y activado HDR"). |
+| **Nunca estorba** | Consejos breves y visuales que se pueden ocultar. Disparo instantáneo, sin retraso. |
+| **Natural, no artificial** | La mejora debe parecer una buena foto, no un filtro. Los efectos fuertes, solo si los pides. |
+| **Siempre mejorando** | Aprende tu estilo en el móvil y recibe modelos y reglas mejores mediante paquetes de actualización. |
+| **No destructivo** | Se guarda la foto original + una "receta" de edición; toda mejora se puede deshacer. |
 
 ---
 
-## 2. Cómo funciona la IA: las 4 capas
+## 2. Tus móviles: qué permite cada uno
+
+| | **Samsung Galaxy S22+** | **Honor Magic 8 Lite** |
+|---|---|---|
+| Chip | Exynos 2200 o Snapdragon 8 Gen 1 (depende de la región; la app lo detecta) | Snapdragon 6 Gen 4 |
+| RAM | 8 GB | 8 GB |
+| Cámaras traseras | 50 MP principal con OIS · 12 MP ultra gran angular · 10 MP teleobjetivo 3× con OIS | 108 MP principal (sensor grande 1/1,67") con OIS · 5 MP ultra gran angular |
+| Android | 14 o superior (One UI) | 15 (MagicOS 9) |
+| Extensiones del fabricante para apps de terceros | **Sí**: Auto, Bokeh, HDR, Noche y Retoque facial. Samsung las abre a otras apps y da acceso a los tres sensores mediante una cámara lógica (zoom) | **Por confirmar**: se comprobará en la Fase 1 |
+| RAW (DNG) | Sí, vía Camera2 (hay informes de un rango de datos algo menor que en el modo Pro de Samsung) | Por confirmar en la Fase 1 |
+| Gemini Nano en el móvil | **No** (solo S25/S26 y otros más nuevos) | **No** (sí en el Magic 8 Pro, no en el Lite) |
+| Aceleración de IA | GPU (Xclipse 920 o Adreno 730); NPU según variante | GPU Adreno + NPU Hexagon |
+| Nivel en la app (§14) | **A−** (gama alta de 2022) | **B** (gama media de 2025) |
+
+**Estrategia para cada móvil**
+
+- **Galaxy S22+:** usar las **extensiones de Samsung** (Noche, HDR, Bokeh) como primera opción porque dan la
+  mejor calidad, con el pipeline propio como alternativa y para todo lo que no cubren. Para retratos, el Director
+  IA preferirá el **tele 3×** (sin distorsión de la cara y mejor desenfoque natural). RAW en el modo Pro.
+- **Honor Magic 8 Lite:** si Honor no expone extensiones, el **pipeline computacional propio** (HDR y noche
+  multiframe, §10) será el principal. El sensor de 108 MP es grande y con OIS, muy bueno para fotos nocturnas
+  multiframe. El ultra gran angular de 5 MP tiene poca calidad, así que la app solo lo usará cuando haga falta
+  y lo indicará.
+- **En ambos:** muchas marcas reservan la resolución completa (50/108 MP) para su propia app de cámara. La app
+  pedirá siempre la máxima resolución disponible y se medirá qué entrega cada móvil en la Fase 1. Si solo da
+  12 MP, se compensa con super-resolución multiframe (§10).
+- **Android mínimo: 14 (API 34).** Ambos móviles lo cumplen, y así Ultra HDR y los shaders de GPU (AGSL)
+  funcionan sin código alternativo para versiones antiguas.
+
+---
+
+## 3. Cómo funciona la IA: las 4 capas
 
 ```mermaid
 flowchart LR
     A[Visor de cámara<br/>frames en vivo] --> B[Capa 1<br/>Percepción<br/>escena, sujeto, caras,<br/>luz, líneas, movimiento]
     B --> C[Capa 2<br/>Director IA<br/>decide ajustes y<br/>genera consejos]
     C -->|ajustes automáticos| A
-    C -->|líneas guía, flechas,<br/>puntuación, consejos| U[Pantalla del usuario]
+    C -->|líneas guía, flechas,<br/>puntuación, consejos| U[Pantalla]
     C -->|disparo inteligente| D[Capa 3<br/>Fotografía computacional<br/>ráfaga, HDR, noche,<br/>mejor frame]
     D --> E[Capa 4<br/>Posprocesado IA<br/>mejora, ruido, bokeh,<br/>borrador, super-resolución]
-    E --> G[Galería + receta<br/>de edición]
+    E --> G[Foto final + receta<br/>de edición]
     G --> L[Aprendizaje<br/>continuo]
     U --> L
-    L -->|preferencias y pesos| C
+    L -->|tu estilo y pesos| C
 ```
 
 1. **Percepción (antes del disparo):** varios modelos ligeros analizan el visor en tiempo real.
-2. **Director IA (decisión):** combina todas las señales y decide la configuración de la cámara
-   y qué consejo mostrar. Es el "cerebro" de la app.
-3. **Fotografía computacional (en el disparo):** ráfaga, fusión HDR, modo noche multiframe,
-   selección del mejor fotograma.
-4. **Posprocesado (después del disparo):** mejora automática por escena y herramientas IA.
+2. **Director IA (decisión):** combina todas las señales y decide la configuración de la cámara y qué
+   consejo mostrar. Es el "cerebro" de la app.
+3. **Fotografía computacional (en el disparo):** ráfaga, fusión HDR, noche multiframe, mejor fotograma,
+   super-resolución multiframe.
+4. **Posprocesado (después del disparo):** mejora automática según la escena y herramientas IA.
 
 Más una capa transversal de **aprendizaje continuo** que ajusta al Director IA con el tiempo.
 
 ---
 
-## 3. Arquitectura técnica
+## 4. Arquitectura técnica
 
 ```mermaid
 flowchart TB
     subgraph UI[Interfaz - Jetpack Compose]
         VF[Visor + overlays]
-        ED[Editor]
-        GA[Galería]
+        RV[Revisión de la foto]
+        ED[Editor IA]
         ST[Ajustes]
     end
     subgraph CORE[Núcleo]
@@ -98,7 +149,7 @@ flowchart TB
         DIR[Director IA<br/>reglas + política aprendida]
         COMP[Motor de composición]
         CPIPE[Pipeline computacional<br/>ráfaga, alineado, fusión]
-        EPIPE[Pipeline de edición<br/>GPU shaders + modelos]
+        EPIPE[Pipeline de edición<br/>shaders GPU + modelos]
     end
     subgraph AI[Capa de inferencia]
         MP[MediaPipe Tasks]
@@ -106,13 +157,13 @@ flowchart TB
         LRT[LiteRT GPU/NPU]
         ONNX[ONNX Runtime Mobile]
         CV[OpenCV]
-        LLM[Gemini Nano / Gemma<br/>opcional]
+        LLM[Gemini API nube<br/>+ plantillas sin conexión]
     end
     subgraph DATA[Datos]
-        ROOM[(Room: eventos y<br/>preferencias)]
+        ROOM[(Room: decisiones y<br/>tu estilo)]
         MS[(MediaStore: fotos)]
-        MODELS[(Modelos descargables)]
-        RC[Configuración remota]
+        MODELS[(Modelos descargados)]
+        PK[Paquetes de mejora<br/>GitHub Releases]
     end
     VF --> CAM
     CAM --> SCH --> AI
@@ -121,206 +172,207 @@ flowchart TB
     DIR --> CAM
     DIR --> VF
     CAM --> CPIPE --> EPIPE --> MS
-    ED --> EPIPE
+    RV --> ED --> EPIPE
     DIR --> ROOM
     ED --> ROOM
-    RC --> DIR
+    PK --> MODELS
+    PK --> DIR
     MODELS --> AI
 ```
 
 **Flujo de un frame del visor**
 
 1. CameraX entrega dos flujos: `Preview` (lo que ves) y `ImageAnalysis` (copia reducida, ~640×480 YUV).
-2. El **Planificador de IA** decide qué modelos corren en ese frame (no todos corren siempre, ver §13).
+2. El **Planificador de IA** decide qué modelos corren en ese frame (no todos corren siempre, §14).
 3. Los resultados se fusionan en un `SceneState` (escena, sujeto, caras, luz, horizonte, estabilidad…).
 4. El **Director IA** transforma el `SceneState` en `CaptureSettings` (ajustes) + `Guidance` (consejos).
-5. Los ajustes se aplican a la cámara de forma suave (sin saltos bruscos) y los consejos se dibujan encima del visor.
+5. Los ajustes se aplican a la cámara de forma suave, sin saltos bruscos, y los consejos se dibujan sobre el visor.
 
 ---
 
-## 4. Tecnología elegida y por qué
+## 5. Tecnología elegida y por qué
 
 | Área | Elección | Motivo |
 |---|---|---|
 | Lenguaje | **Kotlin** nativo | Acceso completo a la cámara y a los aceleradores; Flutter/React Native limitan el control manual y añaden latencia. |
-| Interfaz | **Jetpack Compose + Material 3** | Moderno, rápido para crear overlays animados. |
-| Cámara | **CameraX** + **Camera2 Interop** | CameraX simplifica preview/captura/análisis y da acceso a *Extensions* (HDR, Noche, Bokeh del fabricante) y a Ultra HDR; Camera2 Interop permite ISO, velocidad de obturación y enfoque manual cuando el móvil lo soporta. |
-| Visión en vivo | **MediaPipe Tasks Vision** | Detector de objetos, caras (landmarks), pose, segmentación y clasificación listos para usar, gratis y offline. |
-| Visión adicional | **ML Kit** | Detección de caras rápida, etiquetado de imágenes, segmentación de sujeto, escáner de documentos. |
-| Modelos propios | **LiteRT** (antes TensorFlow Lite) | Runtime oficial de Google para IA en el móvil con aceleración GPU y NPU y fallback automático a CPU. |
+| Interfaz | **Jetpack Compose + Material 3** | Moderno y rápido para crear overlays animados. |
+| Cámara | **CameraX** + **Camera2 Interop** | CameraX simplifica preview/captura/análisis y da acceso a las *Extensions* (HDR, Noche, Bokeh de Samsung) y a Ultra HDR; Camera2 Interop permite ISO, velocidad de obturación y enfoque manual cuando el móvil lo soporta. |
+| Visión en vivo | **MediaPipe Tasks Vision** | Detector de objetos, caras con landmarks, pose, segmentación y clasificación listos para usar, gratis y sin conexión. |
+| Visión adicional | **ML Kit** | Detección de caras rápida, etiquetado de imágenes y segmentación del sujeto. |
+| Modelos propios | **LiteRT** (antes TensorFlow Lite) | Runtime oficial de Google para IA en el móvil con aceleración GPU/NPU y paso automático a CPU si hace falta. |
 | Modelos no convertibles | **ONNX Runtime Mobile** | Para modelos de investigación (p. ej. NAFNet) que se exportan mejor a ONNX. |
-| Visión clásica | **OpenCV** (Apache 2.0) | Líneas, horizonte, alineado de ráfagas, fusión de exposiciones, CLAHE, nitidez. |
-| LLM en el móvil | **ML Kit GenAI Prompt API (Gemini Nano)** y, como alternativa, **Gemma vía LiteRT-LM** | Consejos en lenguaje natural y crítica de fotos sin internet, en móviles compatibles. |
-| Nube (opcional) | **Gemini API** (capa gratuita) vía **Firebase AI Logic** + App Check | Análisis profundo opcional; nunca se incrusta la clave en el APK. |
-| Edición GPU | **AGSL RuntimeShader** (Android 13+) / **OpenGL ES** | Ajustes en tiempo real (tono, LUT, curvas) sin gastar CPU. |
-| Datos | **Room** + **DataStore** | Historial de decisiones, preferencias y aprendizaje local. |
+| Visión clásica | **OpenCV** | Líneas, horizonte, alineado de ráfagas, fusión de exposiciones, CLAHE, medida de nitidez. |
+| IA de lenguaje | **Gemini API** (capa gratuita) con tu propia clave + **plantillas sin conexión** | Ninguno de tus móviles tiene Gemini Nano, así que la nube da la mejor calidad de consejos; sin internet, la app sigue aconsejando con plantillas (§12). |
+| Edición GPU | **AGSL RuntimeShader** | Ajustes en tiempo real (tono, LUT, curvas) sin gastar CPU. |
+| Datos | **Room** + **DataStore** | Historial de decisiones y aprendizaje de tu estilo. |
 | Tareas pesadas | **WorkManager** | Procesar mejoras largas (super-resolución, noche) en segundo plano. |
-| Inyección | **Hilt** · **Coroutines/Flow** | Arquitectura limpia y reactiva. |
-| Actualización remota | **Firebase Remote Config** (gratuito) + descarga de modelos | Mejorar reglas y modelos sin publicar otro APK. |
+| Inyección y concurrencia | **Hilt** · **Coroutines/Flow** | Arquitectura limpia y reactiva. |
+| Actualizaciones | **GitHub Releases** de este repositorio | Nuevos APK y "paquetes de mejora" (modelos y reglas) sin depender de servicios externos. |
 | Compilación | **Gradle KTS** + **GitHub Actions** | El APK se genera automáticamente en la nube con cada cambio. |
 
-> Nota: las versiones exactas de cada librería se fijarán al crear el proyecto (Fase 0) tomando la
-> última estable. A fecha de este plan, CameraX tiene la serie 1.7 en *release candidate*, la API
-> moderna de LiteRT (CompiledModel) sigue madurando y la Prompt API de Gemini Nano está en beta,
-> así que todo lo que dependa de APIs no estables tendrá un camino alternativo estable.
+> Las versiones exactas de cada librería se fijarán al crear el proyecto (Fase 0) usando la última estable.
+> Lo que dependa de APIs aún no estables tendrá un camino alternativo estable.
 
 ---
 
-## 5. Catálogo de modelos de IA gratuitos
+## 6. Catálogo de modelos de IA gratuitos
 
-Todos son gratuitos y pueden ejecutarse en el móvil. **La licencia importa** si algún día se publica
-la app en Google Play o se cobra por ella.
+Al ser de **uso personal** (la app no se distribuye), también se pueden usar modelos con licencia no comercial
+o AGPL. Por eso cada modelo se elige solo por **calidad y velocidad** en tus dos móviles.
 
-### 5.1 Antes del disparo (tiempo real)
+### 6.1 Antes del disparo (tiempo real)
 
-| Función | Modelo recomendado | Runtime | Licencia | Notas |
-|---|---|---|---|---|
-| Tipo de escena (retrato, paisaje, comida, noche, nieve, atardecer, documento, mascota…) | **MobileNetV3 / EfficientNet-Lite** reentrenado en categorías fotográficas (base: Places365 + etiquetas propias) · alternativa rápida: **ML Kit Image Labeling** | LiteRT / ML Kit | Apache 2.0 | ~3–5 MB, 2–4 veces por segundo. |
-| Detección de sujetos/objetos | **MediaPipe Object Detector (EfficientDet-Lite0/2)** · más preciso: **RF-DETR** o **YOLOX** (Apache 2.0) | MediaPipe / LiteRT | Apache 2.0 | **Evitar Ultralytics YOLO**: es AGPL-3.0 y obligaría a liberar todo el código de la app o pagar licencia. |
-| Caras, ojos abiertos, sonrisa, dirección de la mirada | **MediaPipe Face Landmarker** (478 puntos + blendshapes) · **ML Kit Face Detection** | MediaPipe / ML Kit | Apache 2.0 | Detecta parpadeos y sonrisas para el disparo inteligente. |
-| Pose del cuerpo | **MediaPipe Pose Landmarker** | MediaPipe | Apache 2.0 | Evita cortar en articulaciones y da consejos de pose. |
-| Separar sujeto y fondo | **MediaPipe Image Segmenter** (selfie / multiclase) · **ML Kit Subject Segmentation** | MediaPipe / ML Kit | Apache 2.0 | Base para retrato, cielo y bokeh. |
-| Sujeto principal sin clase conocida (saliencia) | **U²-Net (versión pequeña)** | LiteRT | Apache 2.0 | "¿Qué es lo importante en esta imagen?". |
-| Calidad estética del encuadre | **NIMA (MobileNet) — versión LiteRT** (estético + técnico) | LiteRT GPU | Apache 2.0 | ~6,4 MB cada uno, puntuación 1–10. |
-| Líneas, horizonte, puntos de fuga | **OpenCV** (LSD / Hough) + sensores del móvil | OpenCV | Apache 2.0 | No necesita red neuronal. |
-| Profundidad | **Depth Anything V2 Small** · alternativa: **MiDaS small** | LiteRT / ONNX | Apache 2.0 (solo la versión *Small*) / MIT | Las versiones Base/Large de Depth Anything son **no comerciales**. |
-| Documentos | **ML Kit Document Scanner** | ML Kit | Gratis (términos de Google) | Recorte y corrección de perspectiva automáticos. |
+| Función | Modelo | Runtime | Notas |
+|---|---|---|---|
+| Tipo de escena (retrato, grupo, paisaje, ciudad, arquitectura, comida, mascota, noche, atardecer, playa/nieve, interior, flores/macro, producto, acción, cielo) | **MobileNetV3 / EfficientNet-Lite** reentrenado en categorías fotográficas · alternativa inicial: **ML Kit Image Labeling** con mapeo a escenas | LiteRT / ML Kit | ~3–5 MB, 2–4 veces por segundo. |
+| Detección de sujetos | Se comparan en tus móviles: **MediaPipe Object Detector (EfficientDet-Lite)**, **YOLO nano (Ultralytics)** y **RF-DETR nano**; se queda el más rápido y preciso | MediaPipe / LiteRT | YOLO es AGPL, pero no hay problema en uso personal. |
+| Caras, ojos abiertos, sonrisa, mirada | **MediaPipe Face Landmarker** (478 puntos + gestos faciales) | MediaPipe | Para el disparo inteligente y retratos. |
+| Pose del cuerpo | **MediaPipe Pose Landmarker** | MediaPipe | No cortar en articulaciones; consejos de pose. |
+| Separar sujeto y fondo | **MediaPipe Image Segmenter** · **ML Kit Subject Segmentation** | MediaPipe / ML Kit | Base para retrato, cielo y bokeh. |
+| Sujeto sin clase conocida (saliencia) | **U²-Net (versión pequeña)** | LiteRT | "¿Qué es lo importante en esta imagen?". |
+| Calidad estética del encuadre | **NIMA (MobileNet) para LiteRT**, estético + técnico | LiteRT GPU | ~6,4 MB cada uno, puntuación de 1 a 10. |
+| Líneas, horizonte, puntos de fuga | **OpenCV** (LSD / Hough) + sensores del móvil | OpenCV | No necesita red neuronal. |
+| Profundidad en vivo | **Depth Anything V2 Small** | LiteRT / ONNX | A baja frecuencia, para retrato y macro. |
 
-### 5.2 En el disparo
+### 6.2 En el disparo
 
 | Función | Tecnología | Notas |
 |---|---|---|
-| HDR / Noche / Bokeh / Retoque del fabricante | **CameraX Extensions** | Si el fabricante las expone, son la mejor calidad posible y gratis. |
-| HDR propio | Horquillado de exposición + alineado (OpenCV) + **fusión de exposiciones Mertens** | Para móviles sin extensión HDR. |
-| Noche propia | Ráfaga de 6–15 frames + alineado + promediado robusto + **Zero-DCE** | Reduce ruido y aclara sombras. |
-| Mejor fotograma | Nitidez (varianza Laplaciana) + ojos abiertos + NIMA | De una ráfaga se elige el mejor automáticamente. |
-| Ultra HDR | Formato **JPEG_R** (Android 14+) | Fotos con más brillo y rango en pantallas HDR, compatibles con JPEG normal. |
-| RAW | **DNG** vía Camera2 (si el sensor lo permite) | Para el modo Pro. |
+| HDR / Noche / Bokeh del fabricante | **CameraX Extensions** | Disponibles en el S22+; se comprobará en el Honor. |
+| HDR propio | Horquillado de exposición + alineado (OpenCV) + **fusión Mertens** + mapeo de tonos | Cuando no hay extensión o cuando el pipeline propio da mejor resultado. |
+| Noche propia | Ráfaga de 6–15 frames + alineado robusto + promedio con rechazo de "fantasmas" + **Zero-DCE** | Menos ruido y sombras más limpias. |
+| Mejor fotograma | Nitidez (varianza Laplaciana) + ojos abiertos + NIMA | De cada ráfaga se elige el mejor automáticamente. |
+| Super-resolución multiframe | Varios frames con micro-movimientos de la mano → combinación con detalle adicional | Para el zoom digital y por si el móvil limita la resolución. |
+| Ultra HDR | Formato **JPEG_R** | Más brillo y rango en pantallas HDR, compatible con JPEG normal. |
+| RAW | **DNG** vía Camera2 | Modo Pro. |
 
-### 5.3 Después del disparo
+### 6.3 Después del disparo
 
-| Función | Modelo recomendado | Licencia | Notas |
-|---|---|---|---|
-| Mejora en poca luz | **Zero-DCE** (versión LiteRT) | Apache 2.0 | Diminuto (~0,18 MB fp16), corre entero en GPU. |
-| Reducción de ruido y desenfoque | **NAFNet** (denoise / deblur) | MIT | Vía ONNX Runtime; procesado por bloques (*tiles*). |
-| Super-resolución / zoom IA | **Real-ESRGAN x4plus** (versión optimizada para NPU de Qualcomm AI Hub) · alternativa ligera: ESRGAN-lite | BSD-3 | ~40–70 ms por bloque en gama alta Snapdragon. |
-| Borrador mágico (eliminar objetos) | **LaMa** · alternativa móvil más ligera: **MI-GAN** | Apache 2.0 / verificar | Inpainting por bloques alrededor de la zona marcada. |
-| Bokeh / modo retrato posterior | Segmentación + **Depth Anything V2 Small** + desenfoque de lente simulado | Apache 2.0 | Enfoque editable después de la foto. |
-| Cielo (mejorar o realzar) | Segmentación de cielo + curvas locales | Apache 2.0 | Sin reemplazo falso por defecto. |
-| Recorte y enderezado inteligente | Motor de composición (§8) + NIMA | — | Propone 3 recortes ordenados por puntuación. |
-| Color y tono automático por escena | Curvas + LUT 3D + balance de blancos aprendido | — | Shader GPU, instantáneo. |
-| Retoque de piel natural (opcional) | MediaPipe Face Landmarker + filtro bilateral guiado | Apache 2.0 | Solo si el usuario lo activa. |
+| Función | Modelo | Notas |
+|---|---|---|
+| Mejora en poca luz | **Zero-DCE** (LiteRT) | Diminuto (~0,18 MB), corre entero en GPU. |
+| Reducción de ruido y desenfoque | **NAFNet** (denoise / deblur) | Vía ONNX Runtime, por bloques. |
+| Super-resolución / zoom IA | **Real-ESRGAN x4plus** | Optimizado para NPU Snapdragon; en GPU en el resto. |
+| Borrador mágico (eliminar objetos o personas) | **LaMa** · alternativa más ligera: **MI-GAN** | Relleno por bloques alrededor de la zona marcada. |
+| Retrato posterior (desenfoque del fondo) | Segmentación + **Depth Anything V2 Base** + desenfoque de lente simulado | Versión *Base* (mejor calidad), permitida en uso personal. Punto de enfoque editable. |
+| Cielo | Segmentación del cielo + curvas locales | Realza el cielo sin tocar el resto. |
+| Recorte y enderezado inteligente | Motor de composición (§9) + NIMA | Propone 3 recortes ordenados por puntuación. |
+| Color y tono por escena | Curvas + LUT 3D + balance de blancos aprendido | Shader GPU, instantáneo. |
+| Corrección de perspectiva | Líneas detectadas + giroscopio guardado al disparar | Verticales rectas en arquitectura. |
+| Retoque de piel natural (opcional) | MediaPipe Face Landmarker + filtro bilateral guiado | Solo si lo activas. |
 
-### 5.4 IA de lenguaje (consejos y crítica)
+### 6.4 IA de lenguaje (consejos y crítica)
 
-| Opción | Dónde corre | Coste | Cuándo usarla |
-|---|---|---|---|
-| **Gemini Nano** (ML Kit GenAI Prompt API, admite imagen + texto) | En el móvil | Gratis | Móviles compatibles (p. ej. Pixel 10 y otros de gama alta). Solo con la app en primer plano y con cuota por app. |
-| **Gemma** (3n / 4) vía **LiteRT-LM** | En el móvil | Gratis | Paquete opcional para gama alta sin Gemini Nano; descarga de varios GB. |
-| **Gemini API** (capa gratuita) | Nube | Gratis con límites | Solo si el usuario lo activa. Los límites gratuitos cambian a menudo y el contenido enviado en la capa gratuita puede usarse para mejorar productos de Google: se pedirá consentimiento explícito. |
-| **Plantillas de consejos** (sin LLM) | En el móvil | Gratis | Siempre disponible; es la base y funciona en cualquier móvil. |
+| Opción | Dónde corre | Papel en la app |
+|---|---|---|
+| **Gemini API** (modelo Flash de la capa gratuita) | Nube | **Principal** para consejos en lenguaje natural, crítica de fotos y edición por texto. |
+| **Plantillas de consejos** generadas desde el `SceneState` | Móvil | **Siempre disponibles**, sin conexión. Cubren todos los consejos en vivo. |
+| Gemini Nano | Móvil | No disponible en tus móviles; la app lo usaría solo si cambias a uno compatible. |
+| Gemma vía LiteRT-LM | Móvil | Opción futura para consejos avanzados sin internet (descarga de varios GB). |
 
 ---
 
-## 6. Capa 1 — Percepción en vivo (antes del disparo)
+## 7. Capa 1 — Percepción en vivo (antes del disparo)
 
-El objetivo es construir, varias veces por segundo, un `SceneState` con todo lo que un fotógrafo
-observaría antes de disparar:
+El objetivo es construir varias veces por segundo un `SceneState` con todo lo que un fotógrafo observaría
+antes de disparar:
 
 | Señal | Cómo se obtiene | Para qué sirve |
 |---|---|---|
-| **Tipo de escena** | Clasificador de escena (§5.1) suavizado en el tiempo | Elegir estrategia general (retrato, paisaje, comida…). |
+| **Tipo de escena** | Clasificador de escena suavizado en el tiempo | Elegir la estrategia general. |
 | **Sujeto principal** | Caras > personas > animales > objeto detectado > mapa de saliencia | Enfocar, medir la luz y componer alrededor de él. |
-| **Caras** | Face Landmarker: posición, tamaño, ojos, sonrisa, giro de cabeza | Retrato, disparo cuando todos tienen los ojos abiertos. |
+| **Caras** | Face Landmarker: posición, tamaño, ojos, sonrisa, giro de cabeza | Retrato; disparar cuando todos tienen los ojos abiertos. |
 | **Pose** | Pose Landmarker | No cortar en codos/rodillas, consejos de postura. |
-| **Luz** | Histograma de luminancia del plano Y + metadatos (ISO, exposición, temperatura de color) + sensor de luz | Detectar contraluz, poca luz, luces quemadas, rango dinámico. |
-| **Horizonte e inclinación** | Sensor de rotación (giroscopio/acelerómetro) + líneas detectadas | Nivel, corregir verticales en arquitectura. |
-| **Líneas y fugas** | OpenCV LSD + agrupación de líneas | Líneas guía (*leading lines*), simetría. |
-| **Movimiento** | Giroscopio (temblor de la mano) + desplazamiento del sujeto entre frames | Velocidad de obturación, aviso "mantén quieto", modo acción. |
-| **Distancia/profundidad** | Distancia de enfoque (metadatos) + modelo de profundidad a baja frecuencia | Macro, retrato, bokeh. |
-| **Calidad estética** | NIMA 1 vez por segundo | Parte de la puntuación de encuadre. |
+| **Luz** | Histograma del plano Y + metadatos (ISO, exposición, temperatura de color) + sensor de luz | Contraluz, poca luz, luces quemadas, rango dinámico, luz dura o suave. |
+| **Dirección de la luz** | Sombras y brillo en la cara (landmarks) + posición del sol (opcional, §9.4) | Consejos para girar al sujeto o cambiar de lado. |
+| **Horizonte e inclinación** | Sensor de rotación + líneas detectadas | Nivel; verticales rectas en arquitectura. |
+| **Líneas y fugas** | OpenCV LSD + agrupación de líneas | Líneas guía y simetría. |
+| **Movimiento** | Giroscopio (temblor) + desplazamiento del sujeto entre frames | Velocidad de obturación, aviso "mantén quieto", modo acción. |
+| **Distancia y profundidad** | Distancia de enfoque (metadatos) + modelo de profundidad a baja frecuencia | Macro, retrato, elección de lente. |
+| **Calidad estética** | NIMA una vez por segundo | Parte de la puntuación de encuadre. |
 
-**Estabilización temporal:** todas las señales se suavizan (media móvil / histéresis) para que la
-escena no "parpadee" entre categorías y los ajustes no salten. Una escena solo cambia si se mantiene
-~0,5 s.
+**Estabilización temporal:** todas las señales se suavizan para que la escena no "parpadee" entre categorías
+y los ajustes no salten. Una escena solo cambia si se mantiene ~0,5 s.
 
 ---
 
-## 7. Capa 2 — El "Director IA": decisión autónoma
+## 8. Capa 2 — El "Director IA": decisión autónoma
 
-Es el módulo que decide como lo haría un fotógrafo profesional. Funciona en dos niveles:
+Decide como lo haría un fotógrafo profesional, en dos niveles:
 
-1. **Motor experto de reglas** (desde el día 1): conocimiento fotográfico codificado, explicable y fiable.
-2. **Política aprendida** (Fase 7): pesos y preferencias que se ajustan con el uso y con actualizaciones remotas.
+1. **Motor experto de reglas** (desde el principio): conocimiento fotográfico codificado, explicable y fiable.
+2. **Política aprendida** (Fase 7): pesos y preferencias que se ajustan con tu uso.
 
-### 7.1 Qué controla de forma autónoma
+### 8.1 Qué controla de forma autónoma
 
-- Modo de captura: normal, HDR, noche, retrato, acción, macro, documento.
-- Lente/zoom: ultra gran angular, principal, teleobjetivo (p. ej. retrato a 2× para evitar distorsión).
-- Punto de enfoque y medición: siempre sobre el sujeto (ojos si hay cara), con seguimiento.
-- Compensación de exposición (EV) e, *si el móvil lo permite*, ISO y velocidad de obturación manuales.
-- Balance de blancos (protegiendo tonos de piel y atardeceres).
-- Flash / luz de relleno.
-- Número de fotos de la ráfaga y si usa extensión del fabricante o pipeline propio.
-- Estilo de revelado posterior (curvas, saturación, nitidez por escena).
-- Momento de disparo (disparo inteligente, §8.5).
+- Modo de captura: normal, HDR, noche, retrato, acción, macro.
+- Lente/zoom: ultra gran angular, principal, teleobjetivo 3× (S22+).
+- Punto de enfoque y medición: siempre sobre el sujeto (los ojos si hay cara), con seguimiento.
+- Compensación de exposición (EV) y, si el móvil lo permite, ISO y velocidad de obturación manuales.
+- Balance de blancos, protegiendo tonos de piel y atardeceres.
+- Flash o luz de relleno.
+- Número de fotos de la ráfaga y si usa la extensión del fabricante o el pipeline propio.
+- Revelado posterior: curvas, saturación y nitidez según la escena.
+- Momento del disparo (disparo inteligente, §9.5).
 
-### 7.2 Matriz de decisión inicial (ejemplos)
+### 8.2 Matriz de decisión inicial (ejemplos)
 
 | Escena detectada | Señales clave | Decisión automática | Consejo mostrado |
 |---|---|---|---|
-| **Retrato** | Cara > 5 % del encuadre | Extensión Bokeh o retrato propio · enfoque y medición en los ojos · 2× o tele si existe · ráfaga de 5 y elegir ojos abiertos | "Baja a la altura de sus ojos" · "Deja aire sobre la cabeza" · "No cortes por rodillas o codos" |
-| **Contraluz** | Histograma bimodal, sujeto oscuro y fondo quemado | HDR (extensión o fusión propia) · medir en el sujeto · +EV · sugerir flash de relleno | "Gira un poco para que la luz le dé de lado" |
-| **Paisaje** | Clase paisaje, sin caras, enfoque lejano | ISO mínimo · HDR si el rango dinámico es alto · gran angular · nivel de horizonte | "Horizonte en el tercio inferior si el cielo es bonito" · "Busca algo interesante en primer plano" |
-| **Poca luz / noche** | ISO alto en metadatos, poca luz | Extensión Noche o multiframe propio (6–15 frames según el temblor) | "Apoya el móvil o mantén quieto 2 s" |
-| **Comida** | Clase comida | Plato plano → vista cenital (90°); vaso, hamburguesa o tarta → 45° · calidez y saturación sutiles | "Usa luz de ventana lateral, evita el flash" |
-| **Arquitectura** | Muchas líneas verticales convergentes | Avisar de inclinación · corrección de perspectiva posterior | "Pon el móvil recto: 0° de inclinación" |
-| **Acción / niños / mascotas** | Sujeto se mueve rápido | Obturación rápida (≤ 1/500 s si hay control manual) · ráfaga · enfoque con seguimiento | "Baja a la altura del animal" |
-| **Atardecer / cielo** | Clase atardecer, tonos cálidos | −EV para no quemar el cielo · conservar cálidos | "Pon el sol en un punto fuerte de la rejilla" |
-| **Macro** | Sujeto muy cerca | Lente macro si existe · enfoque preciso · f/ISO bajos | "Acércate despacio hasta que se vea nítido" |
-| **Documento** | Detector de documento | Escáner ML Kit · alto contraste | "Encuadra las 4 esquinas" |
+| **Retrato** | Cara > 5 % del encuadre | Bokeh (extensión o propio) · enfoque y medición en los ojos · tele 3× en el S22+ · ráfaga de 5 y elegir ojos abiertos | "Baja a la altura de sus ojos" · "Deja aire sobre la cabeza" · "No cortes por rodillas o codos" |
+| **Grupo** | Varias caras | Enfoque que cubra todas · ráfaga y elección del frame con todos los ojos abiertos | "Que todos estén a la misma distancia" · "Los más altos detrás" |
+| **Contraluz** | Histograma bimodal, sujeto oscuro y fondo quemado | HDR · medir en el sujeto · +EV · sugerir flash de relleno | "Gira un poco para que la luz le dé de lado" |
+| **Paisaje** | Escena de paisaje, sin caras, enfoque lejano | ISO mínimo · HDR si hay mucho rango dinámico · gran angular · nivel de horizonte | "Horizonte en el tercio inferior si el cielo es bonito" · "Busca algo interesante en primer plano" |
+| **Poca luz / noche** | ISO alto, poca luz | Extensión Noche (S22+) o multiframe propio (6–15 frames según el temblor) | "Apoya el móvil o mantenlo quieto 2 s" |
+| **Comida** | Escena de comida | Plato plano → vista cenital (90°); vaso, hamburguesa o tarta → 45° · calidez y saturación sutiles | "Usa luz de ventana lateral, evita el flash" |
+| **Arquitectura / ciudad** | Líneas verticales convergentes | Avisar de inclinación · corrección de perspectiva posterior | "Pon el móvil recto: 0° de inclinación" |
+| **Acción / niños / mascotas** | Sujeto que se mueve rápido | Obturación rápida (≤ 1/500 s si hay control manual) · ráfaga · enfoque con seguimiento | "Baja a la altura del animal" |
+| **Atardecer / amanecer** | Escena de atardecer, tonos cálidos | −EV para no quemar el cielo · conservar cálidos | "Pon el sol en un punto fuerte de la rejilla" |
+| **Playa / nieve** | Mucha luminosidad | +EV para que la nieve/arena no salga gris · proteger luces | "Cuidado con las sombras duras en las caras" |
+| **Macro / flores** | Sujeto muy cerca | Lente y distancia adecuadas · enfoque preciso · ISO bajo | "Acércate despacio hasta que se vea nítido" |
+| **Producto / objeto** | Objeto aislado | Fondo desenfocado o limpio · luz suave | "Fondo sencillo y ángulo de 3/4" |
 
-### 7.3 Cómo decide (estructura interna)
+### 8.3 Cómo decide (estructura interna)
 
 ```kotlin
 // Esquema simplificado del Director IA
 data class SceneState(
     val scene: SceneType, val sceneConfidence: Float,
     val subject: Subject?, val faces: List<FaceInfo>,
-    val light: LightInfo,          // histograma, rango dinámico, contraluz, lux
+    val light: LightInfo,          // histograma, rango dinámico, contraluz, dirección
     val motion: MotionInfo,        // temblor de la mano, velocidad del sujeto
     val horizon: HorizonInfo,      // inclinación, líneas
     val aesthetic: Float,          // NIMA
 )
 
-interface Policy { fun decide(state: SceneState, device: DeviceCaps, prefs: UserPrefs): Decision }
+interface Policy { fun decide(state: SceneState, device: DeviceCaps, style: UserStyle): Decision }
 
 data class Decision(
     val settings: CaptureSettings,  // modo, lente, EV, ISO, obturación, WB, flash, ráfaga
-    val guidance: Guidance,         // líneas, flechas, puntuación, consejo, motivo
+    val guidance: Guidance,         // líneas, flechas, puntuación, consejo
     val reasons: List<String>,      // "Contraluz detectado → +1 EV y HDR"
 )
 ```
 
-- `RuleBasedPolicy` (Fase 2–3) implementa la tabla anterior.
-- `LearnedPolicy` (Fase 7) envuelve a la de reglas y ajusta sus parámetros con las preferencias del usuario.
-- `DeviceCaps` describe lo que permite cada móvil (nivel de hardware Camera2, control manual, RAW,
-  extensiones disponibles, lentes, NPU, Gemini Nano). **La IA nunca pide algo que el móvil no puede hacer.**
+- `RuleBasedPolicy` (Fases 2–3) implementa la tabla anterior.
+- `LearnedPolicy` (Fase 7) envuelve a la de reglas y ajusta sus parámetros con tu estilo.
+- `DeviceCaps` describe lo que permite cada móvil: control manual, RAW, extensiones, lentes, aceleradores.
+  **La IA nunca pide algo que el móvil no puede hacer.**
 
 ---
 
-## 8. Coach de composición: líneas guía, ángulos y consejos
+## 9. Coach de composición: líneas guía, ángulos y consejos
 
-### 8.1 Líneas guía dinámicas (se adaptan a lo que detecta)
+### 9.1 Líneas guía dinámicas (se adaptan a lo que detecta)
 
-- **Rejilla de tercios** con los 4 puntos fuertes resaltados cuando el sujeto se acerca a uno.
+- **Rejilla de tercios**, con los 4 puntos fuertes resaltados cuando el sujeto se acerca a uno.
 - **Espiral áurea / proporción áurea** cuando hay un sujeto claro y espacio negativo.
-- **Eje de simetría** cuando detecta escena simétrica (arquitectura, reflejos).
+- **Eje de simetría** en escenas simétricas (arquitectura, reflejos).
 - **Nivel de horizonte** (verde cuando está recto) y **nivel vertical** para arquitectura.
-- **Líneas guía detectadas** resaltadas para que el usuario las use hacia el sujeto.
-- **Caja del sujeto** y **posición objetivo**: un hueco fantasma que muestra dónde debería estar el sujeto.
+- **Líneas guía detectadas**, resaltadas para que las uses como camino hacia el sujeto.
+- **Caja del sujeto** y **posición objetivo**: un hueco fantasma que muestra dónde debería quedar el sujeto.
 
-### 8.2 Puntuación de encuadre (0–100)
+### 9.2 Puntuación de encuadre (0–100)
 
 ```
 Puntuación = Σ peso_i(escena) × criterio_i
@@ -329,308 +381,318 @@ Puntuación = Σ peso_i(escena) × criterio_i
 | Criterio | Qué mide |
 |---|---|
 | Tercios / proporción áurea | Distancia del sujeto al punto fuerte más adecuado |
-| Horizonte | Inclinación y posición (tercio superior/inferior) |
+| Horizonte | Inclinación y posición (tercio superior o inferior) |
 | Aire sobre la cabeza | Espacio entre la cabeza y el borde superior |
 | Espacio de mirada / movimiento | Más espacio hacia donde mira o se mueve el sujeto |
-| Cortes | No cortar en articulaciones, ni dejar el sujeto pegado al borde |
-| Equilibrio visual | Distribución del "peso" (saliencia) en la imagen |
-| Fondo limpio | Objetos que "salen" de la cabeza, bordes distractores |
+| Cortes | No cortar en articulaciones ni dejar el sujeto pegado al borde |
+| Equilibrio visual | Reparto del "peso" visual (saliencia) en la imagen |
+| Fondo limpio | Objetos que "salen" de la cabeza, elementos que distraen en los bordes |
 | Exposición | Luces quemadas y sombras empastadas en el sujeto |
 | Nitidez / estabilidad | Temblor y desenfoque |
 | Estética global | NIMA |
 
-Los pesos dependen de la escena (en paisaje pesa el horizonte; en retrato, los ojos y el aire sobre la
-cabeza) y más adelante se personalizan (§12).
+Los pesos dependen de la escena (en paisaje pesa el horizonte; en retrato, los ojos y el aire sobre la cabeza)
+y después se personalizan con tu estilo (§13).
 
-### 8.3 Flechas de movimiento
+### 9.3 Flechas de movimiento
 
-El motor calcula dónde debería estar el sujeto (punto fuerte elegido según la dirección de la mirada)
-y el tamaño ideal, y lo traduce en indicaciones sencillas:
+El motor calcula dónde debería estar el sujeto (el punto fuerte adecuado según hacia dónde mira) y su tamaño
+ideal, y lo traduce en indicaciones sencillas:
 
 - "← Mueve el móvil un poco a la izquierda" · "Acércate" / "Aléjate" · "Baja la cámara" · "Gira a horizontal".
-- Vibración suave (háptica) cuando el encuadre llega a la zona óptima.
-- Guía por voz opcional (TTS) para quien prefiera no mirar la pantalla.
+- Vibración suave cuando el encuadre llega a la zona óptima.
+- Guía por voz opcional, para no tener que mirar la pantalla.
 
-### 8.4 Consejos de ángulo por tipo de escena
+### 9.4 Consejos de ángulo y de luz por escena
 
-Biblioteca de conocimiento fotográfico (ampliable por actualización remota). Ejemplos:
+Biblioteca de conocimiento fotográfico, ampliable con paquetes de mejora. Ejemplos:
 
-- **Retrato:** altura de los ojos; ligero ángulo de 3/4; luz lateral suave; evitar luz cenital del mediodía.
-- **Grupo:** todos a la misma distancia de la cámara; los más altos detrás.
+- **Retrato:** a la altura de los ojos; ligero ángulo de 3/4; luz lateral suave; evitar el sol del mediodía.
+- **Grupo:** todos a la misma distancia; los más altos detrás; disparo en ráfaga.
 - **Paisaje:** primer plano + plano medio + fondo; hora dorada; horizonte recto.
 - **Comida:** cenital para platos planos, 45° para comida con altura; luz de ventana.
 - **Arquitectura:** móvil vertical para no deformar; buscar simetría o diagonales.
 - **Mascotas y niños:** a su altura; ráfaga; enfocar los ojos.
 - **Producto:** fondo limpio; luz difusa; ángulo de 3/4.
-- **Noche:** apoyar el móvil; evitar el zoom digital.
+- **Noche:** apoyar el móvil; evitar el zoom digital; buscar fuentes de luz en el encuadre.
+- **Luz del sol (opcional, con ubicación):** la app calcula la posición del sol y avisa de la hora dorada y la
+  hora azul ("la hora dorada empieza en 25 min"), o de que el sol está detrás del sujeto. La ubicación solo se
+  usa para este cálculo y no se guarda en las fotos.
 
-### 8.5 Disparo inteligente (opcional)
+### 9.5 Disparo inteligente (opcional)
 
-La app dispara sola (o avisa) cuando se cumplen a la vez: puntuación ≥ umbral, móvil estable ~300 ms,
-enfoque bloqueado, ojos abiertos y, si procede, sonrisa. En grupos, espera a que **todos** tengan los
-ojos abiertos.
+La app dispara sola, o te avisa, cuando se cumplen a la vez: puntuación ≥ umbral, móvil estable ~300 ms,
+enfoque bloqueado, ojos abiertos y, si procede, sonrisa. En grupos espera a que **todos** tengan los ojos
+abiertos.
 
 ---
 
-## 9. Capa 3 — Fotografía computacional al disparar
+## 10. Capa 3 — Fotografía computacional al disparar
 
-1. **Cero retraso de obturador:** CameraX en modo de mínima latencia y búfer de frames recientes.
+1. **Cero retraso de obturador:** CameraX en modo de mínima latencia, con un búfer de frames recientes.
 2. **Estrategia elegida por el Director IA:**
-   - Si el fabricante ofrece la **extensión** adecuada (HDR, Noche, Bokeh) → se usa (máxima calidad).
+   - Si hay **extensión** del fabricante adecuada (HDR, Noche, Bokeh) y da mejor resultado → se usa.
    - Si no → **pipeline propio**:
      - *HDR:* 3 exposiciones (−2, 0, +2 EV) → alineado → fusión Mertens → mapeo de tonos.
      - *Noche:* 6–15 frames cortos → alineado robusto → promedio con rechazo de fantasmas → Zero-DCE + reducción de ruido.
-     - *Acción / retrato:* ráfaga corta → se elige el frame más nítido con ojos abiertos.
-3. **Formato:** JPEG de alta calidad, **Ultra HDR (JPEG_R)** en Android 14+ y **RAW (DNG)** en el modo Pro.
-4. **Metadatos:** EXIF completo + datos de la decisión de la IA (escena, motivo) para el aprendizaje y el editor.
+     - *Acción / retrato:* ráfaga corta → se elige el frame más nítido y con los ojos abiertos.
+     - *Zoom:* super-resolución multiframe en lugar de zoom digital simple.
+3. **Formato:** JPEG de alta calidad, **Ultra HDR (JPEG_R)** y **RAW (DNG)** en el modo Pro.
+4. **Metadatos:** EXIF completo + datos de la decisión de la IA (escena, motivo, giroscopio) para el editor y el aprendizaje.
 5. **Vista inmediata:** se muestra una vista previa al instante y el procesamiento pesado continúa en segundo plano.
 
 ---
 
-## 10. Capa 4 — Posprocesado con IA
+## 11. Capa 4 — Posprocesado con IA
 
-### 10.1 Mejora automática (sin tocar nada)
+### 11.1 Mejora automática (sin tocar nada)
 
-Tras cada foto se aplica una "receta" según la escena: balance de blancos, curvas, contraste local
-(CLAHE), saturación selectiva, protección de tonos de piel, nitidez adaptativa y reducción de ruido.
-Se guarda **original + versión mejorada**.
+Tras cada foto se aplica una "receta" según la escena y tu estilo: balance de blancos, curvas, contraste local
+(CLAHE), saturación selectiva, protección de tonos de piel, nitidez adaptativa y reducción de ruido. Se guarda
+**original + versión mejorada**.
 
-### 10.2 Herramientas del editor
+### 11.2 Herramientas del editor
 
 | Herramienta | Qué hace |
 |---|---|
-| **Mejorar ✨** | Un toque: la mejor versión según la IA (con intensidad ajustable). |
+| **Mejorar ✨** | Un toque: la mejor versión según la IA, con intensidad ajustable. |
 | **Luz IA** | Recupera sombras en fotos oscuras (Zero-DCE). |
 | **Nitidez / Sin ruido** | NAFNet para ruido y desenfoque leve. |
 | **Zoom IA** | Super-resolución ×2/×4 (Real-ESRGAN). |
-| **Retrato** | Desenfoque de fondo con profundidad; cambiar el punto de enfoque después. |
-| **Borrador mágico** | Elimina personas u objetos no deseados (LaMa / MI-GAN). |
-| **Recorte inteligente** | 3 propuestas de recorte + enderezado automático del horizonte y la perspectiva. |
+| **Retrato** | Desenfoque del fondo con profundidad; cambiar el punto de enfoque después. |
+| **Borrador mágico** | Elimina personas u objetos que molestan (LaMa / MI-GAN). |
+| **Recorte inteligente** | 3 propuestas de recorte + enderezado automático de horizonte y perspectiva. |
 | **Cielo** | Realza el cielo sin afectar al resto. |
-| **Estilos** | LUTs cinematográficos y de película adaptados a cada escena. |
-| **Explícame** | La IA explica qué ha mejorado y qué podrías hacer mejor la próxima vez (§11). |
+| **Estilos** | LUTs de cine y de película adaptados a cada escena. |
+| **Edición por texto** | "Más cálida y con aire de película" → la IA lo traduce a ajustes (§12). |
+| **Crítica del fotógrafo** | Qué está bien, qué falla y cómo hacerla mejor la próxima vez (§12). |
 
 Todo es **no destructivo**: la edición es una lista de pasos guardada junto a la foto.
 
 ---
 
-## 11. IA generativa y conversacional (el "fotógrafo veterano")
+## 12. El "fotógrafo veterano": IA de lenguaje híbrida
 
-Un LLM con visión (Gemini Nano en el móvil cuando esté disponible) añade lo que las reglas no pueden:
+Decisión tomada: **modo híbrido**, la mejor opción para tus móviles (ninguno tiene Gemini Nano).
 
-- **En el visor (bajo demanda o cada pocos segundos si la escena es estable):**
-  "Hay una ventana a tu izquierda: si pones a la persona de lado a ella, la luz será mucho más bonita."
-- **Después de la foto — "Crítica del fotógrafo":** puntuación explicada (composición, luz, momento,
-  nitidez) y 2–3 consejos concretos para la siguiente foto.
-- **Edición por voz/texto:** "hazla más cálida y con aire de película" → el LLM devuelve parámetros JSON
-  que el editor aplica (el LLM nunca modifica píxeles directamente; solo decide parámetros).
-- **Modo aprendizaje:** mini-lecciones según lo que más fallas (p. ej. "tus horizontes suelen estar torcidos").
-
-Importante:
-- El LLM **no está en el bucle de tiempo real** (tarda segundos); el tiempo real lo hacen los modelos de visión.
-- Si el móvil no tiene Gemini Nano, se usan **plantillas de consejos** generadas a partir del `SceneState`,
-  y opcionalmente Gemma descargable o la nube con consentimiento.
-
----
-
-## 12. Aprendizaje continuo: cómo evoluciona la app
-
-Para ser honestos: un móvil no puede reentrenar redes neuronales grandes cada día. La app "aprende" de
-tres formas realistas y complementarias:
-
-### 12.1 Personalización local (en tu móvil, privada)
-
-- Se registran **eventos** en Room: consejos aceptados/ignorados, qué foto de la ráfaga conservas,
-  qué fotos borras, qué ajustes cambias en el editor, valoraciones 👍/👎 de los consejos.
-- **"Tu estilo":** un modelo ligero aprende tus ajustes habituales por escena (p. ej. "le gustan los
-  retratos más cálidos y con menos contraste") y los aplica en la mejora automática.
-- **Bandido contextual** (Thompson sampling / LinUCB): elige entre variantes de ajustes y consejos
-  según el contexto y refuerza las que más te gustan. Ligero, rápido y explicable.
-- **Frecuencia de consejos adaptativa:** si ya dominas los tercios, deja de recordártelos.
-
-### 12.2 Mejora global mediante actualizaciones (sin publicar otro APK)
-
-- **Remote Config:** umbrales, pesos de composición, textos de consejos y nuevas reglas.
-- **Descarga de modelos:** nuevos modelos de escena, mejora o estética se descargan en segundo plano
-  (con Wi-Fi) y se activan tras validarse en el propio móvil.
-- **Telemetría anónima opcional** (solo números, nunca fotos) para saber qué reglas funcionan y mejorar
-  los pesos para todos.
-
-### 12.3 Futuro avanzado
-
-- **Aprendizaje federado** (p. ej. framework Flower): el móvil entrena un poco en local y solo comparte
-  mejoras del modelo, no las fotos.
-- **Modelo de composición propio** entrenado con conjuntos públicos de recorte y composición
-  (GAIC, CADB, AVA — revisar sus licencias, muchos son solo para investigación).
+- **Todo lo visual y en tiempo real ocurre en el móvil.** Escena, sujeto, composición, ajustes, disparo y
+  mejoras funcionan igual sin internet.
+- **La IA de lenguaje usa Gemini en la nube (gratis)** para lo que las reglas no pueden hacer:
+  - **Consejo del experto en el visor** (bajo demanda): "hay una ventana a tu izquierda; si pones a la persona
+    de lado a ella, la luz será mucho más bonita".
+  - **Crítica del fotógrafo** después de la foto: puntuación explicada (composición, luz, momento, nitidez)
+    y 2–3 consejos concretos.
+  - **Edición por texto o voz:** Gemini devuelve parámetros (JSON) que el editor aplica. Nunca modifica los
+    píxeles directamente; solo decide ajustes.
+  - **Corrección de hábitos:** detecta tus errores repetidos (p. ej. horizontes torcidos o sujetos muy
+    centrados) y la app los compensa en el disparo o te avisa justo en ese momento.
+- **Sin conexión**, los consejos se generan con **plantillas** a partir del `SceneState`, así que la app siempre aconseja.
+- **Solo fotografía:** las instrucciones que la app le da a Gemini limitan sus respuestas a la toma y la mejora
+  de fotos. Cualquier otra petición se rechaza.
+- **Configuración:** creas una clave gratuita en Google AI Studio y la pegas en *Ajustes*. Se guarda cifrada
+  en el móvil (Android Keystore) y **nunca se sube al repositorio**.
+- **Qué se envía:** solo cuando pides un consejo o una crítica, una copia reducida de la foto (~1024 px, sin
+  ubicación ni EXIF) + el análisis de la escena. En la capa gratuita Google puede usar ese contenido para mejorar
+  sus productos. Hay un interruptor **"Solo en el dispositivo"** para desactivar la nube cuando quieras.
+- El LLM **no está en el bucle de tiempo real** (tarda unos segundos); el tiempo real lo hacen los modelos de visión.
 
 ---
 
-## 13. Rendimiento, batería y niveles de dispositivo
+## 13. Aprendizaje continuo: cómo evoluciona la app
 
-### 13.1 Planificador de IA (no todo corre en cada frame)
+Un móvil no puede reentrenar redes neuronales grandes cada día. La app aprende de dos formas realistas y
+complementarias:
+
+### 13.1 Tu estilo (en tu móvil, privado)
+
+- Se registran **eventos** en Room: consejos aceptados o ignorados, qué foto de la ráfaga conservas, qué fotos
+  borras, qué ajustes cambias en el editor y valoraciones 👍/👎 de los consejos y las mejoras.
+- **"Tu estilo":** un modelo ligero aprende tus ajustes habituales por escena (p. ej. "le gustan los retratos
+  más cálidos y con menos contraste") y los aplica en la mejora automática.
+- **Bandido contextual** (Thompson sampling): elige entre variantes de ajustes y consejos según el contexto y
+  refuerza las que más te gustan. Ligero, rápido y explicable.
+- **Consejos adaptativos:** si ya dominas los tercios, deja de recordártelos y se centra en lo que aún falla.
+- Las críticas de Gemini también alimentan este aprendizaje (qué aspectos fallan más en tus fotos).
+
+### 13.2 Paquetes de mejora (actualizaciones)
+
+- Cada nueva versión publicada en **GitHub Releases** puede traer un APK nuevo y/o un **paquete de mejora**:
+  modelos mejores, nuevas reglas del Director IA, pesos de composición ajustados y más consejos.
+- La app avisa cuando hay una actualización, la descarga con Wi-Fi y comprueba el modelo nuevo en tu móvil
+  antes de activarlo. Si va peor, vuelve al anterior.
+- Más adelante: **modelos entrenados con tus propias fotos favoritas** (§18).
+
+---
+
+## 14. Rendimiento, batería y niveles de dispositivo
+
+### 14.1 Planificador de IA (no todo corre en cada frame)
 
 | Tarea | Frecuencia | Latencia objetivo |
 |---|---|---|
 | Histograma / exposición | Cada frame | < 2 ms |
 | Caras y landmarks | 15–30 fps | < 15 ms |
-| Detección de objetos/sujeto | ~10 fps | < 30 ms |
+| Detección de sujetos | ~10 fps | < 30 ms |
 | Segmentación | 5–10 fps | < 30 ms |
 | Clasificación de escena | 2–4 fps | < 20 ms |
 | Líneas / horizonte | ~5 fps | < 15 ms |
 | Estética (NIMA) | ~1 fps | ~100 ms |
-| LLM (consejo en lenguaje natural) | Bajo demanda | 1–3 s |
+| Consejo de Gemini | Bajo demanda | 1–3 s (con internet) |
 
 - Si el móvil se calienta (API de estado térmico de Android), el planificador baja frecuencias y resolución.
-- Aceleración: NPU → GPU → CPU, con *fallback* automático en LiteRT.
-- Modelos cuantizados (fp16/int8), **verificando** que la cuantización no introduce bandas ni cambios de color
+  Importante en el S22+, cuyo chip tiende a calentarse.
+- Aceleración: NPU → GPU → CPU, con paso automático en LiteRT.
+- Modelos cuantizados (fp16/int8), **comprobando** que la cuantización no introduce bandas ni cambios de color
   en los modelos de mejora de imagen.
 
-### 13.2 Niveles de dispositivo
+### 14.2 Niveles de dispositivo
 
-| Nivel | Ejemplo | Qué se activa |
+| Nivel | Tus móviles | Qué se activa |
 |---|---|---|
-| **A — Gama alta** | NPU moderna, Gemini Nano | Todo: LLM en el móvil, todos los modelos en vivo, super-resolución rápida. |
-| **B — Gama media** | GPU decente | Visión en vivo completa a menor frecuencia; posprocesado pesado en segundo plano. |
-| **C — Gama básica** | Solo CPU | Escena + caras + composición por reglas; mejoras ligeras; sin LLM local. |
+| **A−** | Galaxy S22+ | Toda la visión en vivo, extensiones de Samsung, posprocesado completo en GPU. |
+| **B** | Honor Magic 8 Lite | Visión en vivo completa a algo menos de frecuencia; posprocesado pesado en segundo plano; NPU para super-resolución si es compatible. |
 
-La app mide el móvil la primera vez (mini-benchmark de 5 s) y elige el nivel automáticamente.
+La app mide el móvil la primera vez (mini-benchmark de unos 5 s) y ajusta el nivel automáticamente.
 
 ---
 
-## 14. Experiencia de usuario y modos
+## 15. Experiencia de usuario y modos
 
 **Pantalla principal:** visor a pantalla completa · indicador de escena ("🌅 Atardecer · HDR") · puntuación de
 encuadre · líneas guía dinámicas · un consejo breve · botón de disparo · selector de lente.
 
-| Modo | Para quién | Comportamiento |
-|---|---|---|
-| **Auto IA** (por defecto) | Todo el mundo | La IA decide todo; consejos mínimos. |
-| **Guiado** | Quien quiere aprender | Consejos, flechas y explicaciones de cada decisión. |
-| **Retrato / Noche / Comida / Paisaje / Documento** | Acceso rápido | Fuerza la estrategia de esa escena. |
-| **Pro** | Usuarios avanzados | ISO, obturación, enfoque, WB, RAW manuales, con la sugerencia de la IA visible al lado. |
+| Modo | Comportamiento |
+|---|---|
+| **Auto IA** (por defecto) | La IA decide todo; consejos mínimos. |
+| **Guiado** | Consejos, flechas y el motivo de cada decisión. |
+| **Retrato · Noche · Paisaje · Comida · Acción · Macro** | Fuerza la estrategia de esa escena. |
+| **Pro** | ISO, obturación, enfoque, balance de blancos y RAW manuales, con la sugerencia de la IA al lado. |
 
-Otras piezas: galería propia con búsqueda por contenido ("perro", "playa"), editor, ajustes (privacidad,
-nube opcional, consejos por voz) y una pantalla de "Tu progreso" (cómo ha mejorado tu puntuación media).
+**Pantallas:** visor · revisión de la última foto (comparar original y mejorada) · editor IA · ajustes
+(clave de Gemini, "Solo en el dispositivo", guía por voz, disparo inteligente, posición del sol).
+Para ver todas tus fotos se usa la galería normal del móvil; la app abre cualquier foto en su editor.
 
 ---
 
-## 15. Privacidad, licencias y límites reales
+## 16. Privacidad, licencias y límites reales
 
 **Privacidad**
-- Todo el análisis y la mejora se hacen en el móvil. Ninguna foto sale del dispositivo salvo que el usuario
-  active expresamente la IA en la nube.
-- Permisos: cámara (obligatorio), micrófono (solo vídeo, futuro), ubicación (opcional para EXIF).
-- Las claves de la nube no van dentro del APK: se usa Firebase AI Logic con App Check o un pequeño proxy.
+- El análisis y la mejora de imagen se hacen en el móvil. Solo sale una copia reducida de la foto cuando pides
+  un consejo o una crítica a Gemini, y se puede desactivar.
+- Permisos: cámara (obligatorio) y ubicación aproximada (opcional, solo para la posición del sol).
 
 **Licencias**
-- Usar solo modelos Apache 2.0 / MIT / BSD o con términos que permitan el uso previsto.
-- Evitar Ultralytics YOLO (AGPL-3.0) y las versiones no comerciales de Depth Anything (Base/Large).
-- Los modelos de Gemma tienen sus propios términos de uso; Gemini Nano y Gemini API, los términos de Google.
+- Al ser de uso personal y no distribuirse, se pueden usar modelos AGPL o no comerciales. Si algún día quisieras
+  publicarla, habría que revisar y sustituir esos modelos.
 
 **Límites reales (para no prometer de más)**
-- Las apps de terceros no tienen acceso a todo el procesado interno de la cámara de cada fabricante.
-  Por eso se usan las *Extensions* cuando existen y un pipeline propio cuando no.
-- El control manual (ISO, obturación) y el RAW dependen del móvil (nivel de hardware Camera2).
-- Gemini Nano solo funciona en ciertos móviles y con la app en primer plano.
-- El emulador de Android no sirve para probar la cámara de verdad: hace falta un móvil físico.
+- Las apps de terceros no tienen acceso a todo el procesado interno de la cámara de Samsung u Honor. Por eso se
+  usan las extensiones cuando existen y un pipeline propio cuando no.
+- La resolución máxima, el control manual y el RAW dependen de lo que cada fabricante abra a otras apps; se mide
+  en la Fase 1.
+- En el S22+ el acceso al teleobjetivo es a través de la cámara lógica (zoom); se comprobará en la Fase 1.
+- Los límites de la capa gratuita de Gemini cambian con el tiempo; si se agotan, la app usa las plantillas sin conexión.
+- El emulador de Android no sirve para probar la cámara: todas las pruebas se harán en tus dos móviles.
 
 ---
 
-## 16. Hoja de ruta por fases (hasta el APK v1.0)
+## 17. Hoja de ruta por fases (hasta el APK v1.0)
 
-Cada fase termina con un **APK instalable** que se puede probar.
+Cada fase termina con un **APK instalable** para probar en tus dos móviles.
 
 | Fase | Contenido | Entregable | Criterio de "terminado" |
 |---|---|---|---|
-| **0 — Base** | Proyecto Kotlin multi-módulo, Compose, Hilt, CI en GitHub Actions que genera el APK, permisos, detección de capacidades del móvil | APK v0.0 "hola cámara" | El APK se descarga desde GitHub y abre la cámara. |
-| **1 — Cámara sólida** | Visor, captura, cambio de lente, zoom, flash, toque para enfocar, rejilla, nivel con sensores, guardado en galería con EXIF | **APK v0.1** | Fotos sin retraso y guardadas correctamente. |
-| **2 — Percepción en vivo** | Planificador de IA, escena, sujeto, caras, histograma, luz; enfoque y exposición automáticos sobre el sujeto; extensiones del fabricante | **APK v0.2** | La app reconoce ≥ 10 tipos de escena y enfoca sola al sujeto. |
-| **3 — Coach de composición** | Motor de composición, líneas guía dinámicas, flechas, puntuación, consejos por escena, disparo inteligente, Director IA por reglas | **APK v0.3** | Guía al usuario hasta un encuadre con puntuación alta. |
-| **4 — Computacional** | Ráfaga + mejor frame, HDR propio, noche multiframe, Ultra HDR, RAW, modo Pro | **APK v0.4** | Mejora visible en contraluz y noche frente a una foto simple. |
-| **5 — Posprocesado IA** | Mejora automática, Luz IA, ruido, retrato posterior, borrador, zoom IA, recorte inteligente, estilos; editor no destructivo | **APK v0.5** | Editor completo funcionando en el móvil de pruebas. |
-| **6 — IA conversacional** | Gemini Nano (si hay), plantillas de consejos, "Crítica del fotógrafo", edición por texto, nube opcional | **APK v0.6** | Explica cada foto y da consejos útiles. |
-| **7 — Aprendizaje** | Registro de eventos, "Tu estilo", bandido contextual, Remote Config, descarga de modelos, feedback 👍/👎 | **APK v0.7** | La mejora automática se adapta a los gustos tras ~50 fotos. |
-| **8 — Pulido y lanzamiento** | Rendimiento y batería, pruebas en varios móviles, accesibilidad, traducciones, política de privacidad, firma de release | **APK v1.0** | Estable, fluido y listo para Google Play (si se quiere publicar). |
+| **0 — Base** | Proyecto Kotlin multi-módulo, Compose, Hilt; GitHub Actions que genera el APK firmado siempre con la misma clave (para que cada versión se instale encima de la anterior); permisos | APK v0.0 | El APK se descarga desde GitHub y abre la cámara en ambos móviles. |
+| **1 — Cámara sólida** | Visor, captura, lentes y zoom, flash, toque para enfocar, rejilla, nivel con sensores, guardado con EXIF; pantalla interna de diagnóstico que muestra qué permite cada móvil (extensiones, RAW, resolución, control manual) | **APK v0.1** | Fotos sin retraso; sabemos con datos reales qué ofrece el S22+ y qué el Honor. |
+| **2 — Percepción en vivo** | Planificador de IA, escena, sujeto, caras, pose, histograma y luz; enfoque y exposición automáticos sobre el sujeto; uso de extensiones | **APK v0.2** | Reconoce ≥ 12 tipos de escena y enfoca solo al sujeto. |
+| **3 — Coach de composición** | Motor de composición, líneas guía dinámicas, flechas, puntuación, consejos por escena, posición del sol, disparo inteligente, Director IA por reglas | **APK v0.3** | Te guía hasta un encuadre con puntuación alta. |
+| **4 — Computacional** | Ráfaga + mejor frame, HDR propio, noche multiframe, super-resolución multiframe, Ultra HDR, RAW, modo Pro | **APK v0.4** | Mejora visible en contraluz, noche y zoom frente a una foto simple. |
+| **5 — Posprocesado IA** | Mejora automática, Luz IA, ruido, retrato posterior, borrador, zoom IA, recorte inteligente, cielo, estilos; editor no destructivo | **APK v0.5** | Editor completo funcionando en ambos móviles. |
+| **6 — Fotógrafo veterano** | Gemini (consejo en el visor, crítica, edición por texto), plantillas sin conexión, corrección de hábitos, clave cifrada | **APK v0.6** | Explica cada foto y da consejos útiles, con y sin internet. |
+| **7 — Aprendizaje** | Registro de eventos, "Tu estilo", bandido contextual, 👍/👎, paquetes de mejora desde GitHub Releases | **APK v0.7** | La mejora automática se adapta a tus gustos tras ~50 fotos. |
+| **8 — Pulido** | Optimización de velocidad, temperatura y batería en el S22+ y el Honor; estabilidad; ajuste fino de cada modelo | **APK v1.0** | Fluida, estable y sin calentamiento excesivo. |
 
-**Pruebas en todas las fases:** tests unitarios del motor de composición y del Director IA, tests
-instrumentados de cámara, benchmarks de rendimiento y un conjunto de fotos de referencia para comprobar que
-las mejoras de imagen no empeoran entre versiones.
-
----
-
-## 17. Qué añadir después (versión 2 y más)
-
-- **Vídeo con IA:** seguimiento del sujeto, estabilización, encuadre automático y desenfoque de fondo en vídeo.
-- **Astrofotografía:** exposiciones largas con trípode, alineado de estrellas.
-- **Panorámica guiada** y **fotos de larga exposición** simuladas (agua sedosa, estelas de luz).
-- **Reiluminación de retratos** (cambiar la dirección de la luz después de la foto).
-- **Ampliar la foto (outpainting)** y relleno generativo avanzado.
-- **Mando desde el reloj** (Wear OS) y disparo por gesto o voz.
-- **Retos y lecciones** diarias para aprender fotografía con la app.
-- **Versión iPhone** compartiendo la lógica con Kotlin Multiplatform.
-- **Modelos propios** de escena y composición entrenados con datos de los usuarios que den su consentimiento.
+**Pruebas en todas las fases:** tests unitarios del motor de composición y del Director IA, benchmarks de
+rendimiento en tus dos móviles y un conjunto de fotos de referencia para comprobar que las mejoras de imagen no
+empeoran entre versiones.
 
 ---
 
-## 18. Estructura del proyecto y cómo se generará el APK
+## 18. Qué añadir después (versión 2 y más)
+
+Todo centrado en tomar mejores fotos o mejorar su calidad:
+
+- **Astrofotografía:** exposiciones largas con el móvil apoyado y alineado de estrellas.
+- **Panorámica guiada** con corrección de exposición entre tomas.
+- **Larga exposición simulada:** agua sedosa, estelas de luz, eliminar gente en movimiento.
+- **Apilado de enfoque** (focus stacking) para macro totalmente nítido.
+- **Reiluminación de retratos:** cambiar la dirección de la luz después de la foto.
+- **Ampliar la foto (outpainting)** para arreglar encuadres demasiado justos.
+- **Temporizador inteligente por gesto** para autorretratos y fotos de grupo (dispara cuando todos miran).
+- **Gemma en el móvil** para consejos avanzados sin internet.
+- **Modelos entrenados con tus propias fotos favoritas** para que la mejora automática sea exactamente tu estilo.
+
+---
+
+## 19. Estructura del proyecto y cómo se generará el APK
 
 ```
 IA-C-mara-/
 ├── app/                      # Aplicación Android (punto de entrada, navegación)
 ├── core/
 │   ├── camera/               # CameraX, Camera2 interop, extensiones, capacidades del móvil
-│   ├── ai/                   # Envoltorios de MediaPipe, ML Kit, LiteRT, ONNX, OpenCV; planificador
+│   ├── ai/                   # MediaPipe, ML Kit, LiteRT, ONNX, OpenCV; planificador
 │   ├── director/             # SceneState, políticas (reglas y aprendida), decisiones
 │   ├── composition/          # Motor de composición y puntuación
 │   ├── imaging/              # Pipeline computacional y de edición (shaders, fusión)
-│   └── data/                 # Room, DataStore, MediaStore, Remote Config
+│   ├── coach/                # Gemini + plantillas de consejos
+│   └── data/                 # Room, DataStore, MediaStore, paquetes de mejora
 ├── feature/
 │   ├── viewfinder/           # Visor y overlays
+│   ├── review/               # Revisión de la foto (original vs. mejorada)
 │   ├── editor/               # Editor IA
-│   ├── gallery/              # Galería
-│   └── settings/             # Ajustes y privacidad
-├── models/                   # Modelos .tflite/.onnx incluidos (los grandes se descargan)
+│   └── settings/             # Ajustes
+├── models/                   # Modelos .tflite/.onnx pequeños (los grandes se descargan)
 ├── docs/
 │   └── PLAN.md               # Este documento
 └── .github/workflows/        # CI: compila y publica el APK
 ```
 
-**Generación del APK sin instalar nada:** un flujo de GitHub Actions compilará el proyecto en cada cambio y
-dejará el APK descargable en la pestaña *Actions* del repositorio (y en *Releases* para las versiones
-etiquetadas). Para instalarlo en el móvil basta con descargarlo y permitir "instalar apps de origen desconocido".
+**Generación del APK sin instalar nada:** GitHub Actions compila el proyecto con cada cambio y deja el APK
+descargable en la pestaña *Actions* del repositorio (y en *Releases* para cada versión). Para instalarlo:
+descargarlo en el móvil y permitir "instalar apps desconocidas" para el navegador o el gestor de archivos.
 
 ---
 
-## 19. Decisiones pendientes
+## 20. Decisiones tomadas
 
-Valores propuestos por defecto (se pueden cambiar antes de empezar la Fase 0):
-
-| Decisión | Propuesta |
+| Decisión | Valor |
 |---|---|
-| Nombre de la app e identificador | "IA Cámara" · `com.iacamara.app` |
-| Android mínimo | Android 8.0 (API 26); Ultra HDR solo en Android 14+ y AGSL en 13+ |
-| Idioma | Español (preparada para traducir) |
-| Móvil de pruebas | **Pendiente: indicar el modelo** (determina NPU, Gemini Nano, control manual y extensiones) |
-| Distribución | APK directo al principio; Google Play opcional en la v1.0 |
-| IA en la nube | Desactivada por defecto; opcional con consentimiento |
+| Nombre e identificador | **IA Cámara** · `com.iacamara.app` |
+| Uso | Personal (APK directo, sin Google Play) |
+| Móviles de prueba | Samsung Galaxy S22+ y Honor Magic 8 Lite |
+| Android mínimo | Android 14 (API 34) |
+| Idioma | Español |
+| Alcance | Solo funciones para tomar mejores fotos o mejorar su calidad (§1.1) |
+| IA en la nube | Híbrida: visión siempre en el móvil; Gemini (gratis) para consejos en lenguaje natural, con alternativa sin conexión e interruptor "Solo en el dispositivo" |
+| Licencias de modelos | Se elige el mejor modelo sin restricciones de licencia comercial (uso personal) |
 
 ---
 
-## 20. Fuentes consultadas
+## 21. Fuentes consultadas
 
 - [Versiones de CameraX (Android Developers)](https://developer.android.com/jetpack/androidx/releases/camera)
-- [Ultra HDR en Android (AOSP)](https://source.android.com/docs/core/camera/ultra-hdr)
-- [Ultra HDR llega a CameraX para apps de terceros (Android Central)](https://www.androidcentral.com/apps-software/google-adding-ultra-hdr-image-capture-to-camerax-api)
-- [LiteRT: el framework universal para IA en el dispositivo (Google Developers Blog)](https://developers.googleblog.com/en/litert-the-universal-framework-for-on-device-ai/)
-- [LiteRT Next — visión general](https://ai.google.dev/edge/litert/next/overview)
-- [Aceleración avanzada en LiteRT (InfoWorld)](https://www.infoworld.com/article/4123828/googles-litert-adds-advanced-hardware-acceleration.html)
+- [Extensiones de cámara (AOSP)](https://source.android.com/docs/core/camera/camerax-vendor-extensions)
+- [Samsung abre las extensiones de cámara del Galaxy S22 a apps de terceros (SamMobile)](https://www.sammobile.com/news/samsung-supports-3rd-party-camera-app-devs-better-than-google)
+- [RAW con Camera2 en el Galaxy S22 (foro de desarrolladores de Samsung)](https://forum.developer.samsung.com/t/data-range-and-number-of-bits-of-raw-images-dng/23207)
+- [Acceso al teleobjetivo desde apps de terceros (foro de desarrolladores de Samsung)](https://forum.developer.samsung.com/t/telephoto-access-via-third-party-application/42137)
+- [Ficha técnica del Honor Magic 8 Lite (TuttoAndroid)](https://www.tuttoandroid.net/schede-tecniche/honor-magic8-lite_5176/) · [Análisis (Notebookcheck)](https://www.notebookcheck.net/Rugged-does-not-have-to-mean-a-brick-Honor-Magic8-Lite-review.1206677.0.html)
+- [Ultra HDR en Android (AOSP)](https://source.android.com/docs/core/camera/ultra-hdr) · [Ultra HDR en CameraX (Android Central)](https://www.androidcentral.com/apps-software/google-adding-ultra-hdr-image-capture-to-camerax-api)
+- [LiteRT (Google Developers Blog)](https://developers.googleblog.com/en/litert-the-universal-framework-for-on-device-ai/) · [LiteRT Next](https://ai.google.dev/edge/litert/next/overview)
 - [MediaPipe Solutions guide](https://developers.google.com/edge/mediapipe/solutions/guide)
-- [ML Kit GenAI APIs](https://developers.google.com/ml-kit/genai) · [Prompt API — primeros pasos](https://developers.google.com/ml-kit/genai/prompt/android/get-started)
-- [Prompt API de Android (InfoQ)](https://www.infoq.com/news/2025/11/android-genai-prompt-api)
-- [Gemma 3n E2B para LiteRT-LM (Hugging Face)](https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/blob/refs%2Fpr%2F2/README.md)
+- [ML Kit GenAI APIs y dispositivos compatibles con Gemini Nano](https://developers.google.com/ml-kit/genai)
 - [NIMA para LiteRT (Hugging Face)](https://huggingface.co/litert-community/NIMA-LiteRT) · [idealo image-quality-assessment](https://github.com/idealo/image-quality-assessment) · [Paper NIMA](https://arxiv.org/pdf/1709.05424)
 - [Zero-DCE para LiteRT (Hugging Face)](https://huggingface.co/mlboydaisuke/zero-dce-litert)
 - [Real-ESRGAN x4plus (Qualcomm AI Hub)](https://huggingface.co/qualcomm/Real-ESRGAN-x4plus/raw/main/README.md)
-- [Super-resolución con TensorFlow Lite en Android (TensorFlow Blog)](https://blog.tensorflow.org/2020/12/how-to-generate-super-resolution-images-using-tensorflow-lite-on-android.html)
-- [Alternativas a Ultralytics en 2026 (Lightly)](https://lightly.ai/blog/best-ultralytics-alternatives-in-2026) · [Licencia del plugin YOLO de Ultralytics](https://pub.dev/documentation/ultralytics_yolo/0.3.3/)
-- [Límites de la capa gratuita de Gemini API en 2026 (guía de terceros)](https://yingtu.ai/en/blog/google-gemini-api-free-tier-limits-2026) — verificar siempre en la página oficial de precios de Google.
+- [Alternativas a Ultralytics en 2026 (Lightly)](https://lightly.ai/blog/best-ultralytics-alternatives-in-2026)
+- [Límites de la capa gratuita de Gemini API en 2026 (guía de terceros)](https://yingtu.ai/en/blog/google-gemini-api-free-tier-limits-2026) — verificar siempre en la página oficial de Google.
