@@ -603,7 +603,7 @@ Cada fase termina con un **APK instalable** para probar en tus dos móviles.
 
 | Fase | Contenido | Entregable | Criterio de "terminado" |
 |---|---|---|---|
-| **0 — Base** | Proyecto Kotlin multi-módulo, Compose, Hilt; GitHub Actions que genera el APK firmado siempre con la misma clave (para que cada versión se instale encima de la anterior); permisos, sin permiso de internet | APK v0.0 | El APK se descarga desde GitHub y abre la cámara en ambos móviles. |
+| **0 — Base** | Proyecto Kotlin con Compose (se divide en módulos cuando llegue la IA); GitHub Actions que genera el APK firmado siempre con la misma clave (para que cada versión se instale encima de la anterior); permisos, sin permiso de internet | APK v0.0 | El APK se descarga desde GitHub y abre la cámara en ambos móviles. |
 | **1 — Cámara sólida** | Visor, captura, lentes y zoom, flash, toque para enfocar, rejilla, nivel con sensores, guardado con EXIF; pantalla interna de diagnóstico que muestra qué permite cada móvil (extensiones, RAW, resolución, control manual) | **APK v0.1** | Fotos sin retraso; sabemos con datos reales qué ofrece el S22+ y qué el Honor. |
 | **2 — Percepción en vivo** | Planificador de IA, escena, sujeto, caras, pose, histograma y luz; enfoque y exposición automáticos sobre el sujeto; uso de extensiones | **APK v0.2** | Reconoce ≥ 12 tipos de escena y enfoca solo al sujeto. |
 | **3 — Coach de composición** | Motor de composición, líneas guía dinámicas, flechas, puntuación, consejos por escena, posición del sol, disparo inteligente, Director IA por reglas | **APK v0.3** | Te guía hasta un encuadre con puntuación alta. |
