@@ -29,3 +29,26 @@ object FrameMath {
 
     private fun normalize(degrees: Int): Int = ((degrees % 360) + 360) % 360
 }
+
+/**
+ * El temblor de la mano solo importa si mueve la imagen durante la exposición:
+ * desenfoque ≈ velocidad de giro × tiempo de exposición × focal en píxeles (× zoom).
+ * De día, con exposiciones muy cortas, aunque la mano se mueva la foto sale nítida.
+ */
+object BlurRisk {
+    /** Focal aproximada en píxeles de una foto de 12 MP con la lente de ~24 mm. */
+    private const val FOCAL_PX = 2800f
+
+    /** Píxeles de desenfoque a partir de los cuales se nota la foto movida. */
+    private const val BLUR_PX_LIMIT = 4f
+
+    /** Sin datos del sensor, solo se avisa con un temblor fuerte (rad/s). */
+    private const val SHAKE_WITHOUT_META = 0.45f
+
+    fun blurPixels(shakeRadPerS: Float, exposureNs: Long, zoom: Float): Float =
+        shakeRadPerS * (exposureNs / 1_000_000_000f) * FOCAL_PX * zoom.coerceAtLeast(1f)
+
+    fun isRisky(shakeRadPerS: Float, meta: CaptureMeta?, zoom: Float): Boolean =
+        if (meta == null) shakeRadPerS > SHAKE_WITHOUT_META
+        else blurPixels(shakeRadPerS, meta.exposureNs, zoom) > BLUR_PX_LIMIT
+}

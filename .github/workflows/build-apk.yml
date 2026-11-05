@@ -58,6 +58,20 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk out/IA-Camara.apk
           ls -lh out
 
+      - name: Comprobar que la IA sigue intacta tras optimizar
+        run: |
+          # MediaPipe necesita encontrar Flogger por su nombre; si R8 lo renombra, los modelos no cargan.
+          if unzip -p out/IA-Camara.apk 'classes*.dex' | grep -a -q "Lcom/google/common/flogger/backend/system/DefaultPlatform;"; then
+            echo "Flogger presente: MediaPipe podrá cargar los modelos."
+          else
+            echo "::error::R8 ha eliminado Flogger: MediaPipe no podrá cargar los modelos."
+            exit 1
+          fi
+          for m in blaze_face_short_range efficientdet_lite0 efficientnet_lite0; do
+            unzip -v out/IA-Camara.apk "assets/models/$m.tflite" | grep -q " Stored " || { echo "::error::El modelo $m falta o está comprimido"; exit 1; }
+          done
+          echo "Modelos presentes y sin comprimir."
+
       - name: Publicar en Releases
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         env:

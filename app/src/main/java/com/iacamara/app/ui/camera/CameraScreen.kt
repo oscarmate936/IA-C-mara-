@@ -153,6 +153,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
     SideEffect {
         analyzer.frontCamera = state.lens == Lens.FRONT
         analyzer.enabled = iaEnabled
+        analyzer.zoomRatio = state.zoomRatio
     }
 
     // Orientación física del móvil: gira los iconos y corrige la rotación de la foto.
@@ -452,8 +453,8 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 SmallNotice(
                     error,
                     Modifier
-                        .align(Alignment.Center)
-                        .padding(16.dp),
+                        .align(Alignment.TopCenter)
+                        .padding(top = 112.dp, start = 16.dp, end = 16.dp),
                 )
             }
             FocusRing(focusPoint, focusKey)

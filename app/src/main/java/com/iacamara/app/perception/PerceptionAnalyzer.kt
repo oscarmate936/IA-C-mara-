@@ -46,6 +46,7 @@ class PerceptionAnalyzer(
     @Volatile var enabled: Boolean = true
     @Volatile var frontCamera: Boolean = false
     @Volatile var deviceDegrees: Int = 0
+    @Volatile var zoomRatio: Float = 1f
 
     private var faceDetector: FaceDetector? = null
     private var objectDetector: ObjectDetector? = null
@@ -70,8 +71,10 @@ class PerceptionAnalyzer(
     private fun ensureModels() {
         if (initialized) return
         initialized = true
-        try {
-            faceDetector = FaceDetector.createFromOptions(
+        val failures = mutableListOf<String>()
+        // Cada modelo se carga por separado: si uno falla, los demás siguen funcionando.
+        faceDetector = load("caras", failures) {
+            FaceDetector.createFromOptions(
                 appContext,
                 FaceDetector.FaceDetectorOptions.builder()
                     .setBaseOptions(base(FACE_MODEL))
@@ -79,7 +82,9 @@ class PerceptionAnalyzer(
                     .setMinDetectionConfidence(0.5f)
                     .build(),
             )
-            objectDetector = ObjectDetector.createFromOptions(
+        }
+        objectDetector = load("objetos", failures) {
+            ObjectDetector.createFromOptions(
                 appContext,
                 ObjectDetector.ObjectDetectorOptions.builder()
                     .setBaseOptions(base(OBJECT_MODEL))
@@ -88,7 +93,9 @@ class PerceptionAnalyzer(
                     .setScoreThreshold(0.35f)
                     .build(),
             )
-            classifier = ImageClassifier.createFromOptions(
+        }
+        classifier = load("escenas", failures) {
+            ImageClassifier.createFromOptions(
                 appContext,
                 ImageClassifier.ImageClassifierOptions.builder()
                     .setBaseOptions(base(SCENE_MODEL))
@@ -97,10 +104,18 @@ class PerceptionAnalyzer(
                     .setScoreThreshold(0.05f)
                     .build(),
             )
-        } catch (e: Throwable) {
-            Log.e(TAG, "No se pudieron cargar los modelos", e)
-            _error.value = "IA no disponible: ${e.message}"
         }
+        if (failures.isNotEmpty()) _error.value = "IA incompleta · " + failures.joinToString(" · ")
+    }
+
+    private fun <T> load(name: String, failures: MutableList<String>, create: () -> T): T? = try {
+        create()
+    } catch (e: Throwable) {
+        Log.e(TAG, "No se pudo cargar el modelo de $name", e)
+        // El error útil suele estar en la causa más interna (p. ej. dentro de ExceptionInInitializerError).
+        val root = generateSequence(e) { it.cause }.last()
+        failures += "$name: ${root.javaClass.simpleName} ${root.message ?: ""}".trim()
+        null
     }
 
     private fun base(path: String): BaseOptions = BaseOptions.builder().setModelAssetPath(path).build()
@@ -186,7 +201,7 @@ class PerceptionAnalyzer(
                 light.backgroundLuma > 110f && light.highlightClip > 0.02f
             if (backlit) add(Condition.CONTRALUZ)
             if ((ev != null && ev < 5f) || light.meanLuma < 45f) add(Condition.POCA_LUZ)
-            if (motion.shake > SHAKE_THRESHOLD) add(Condition.TEMBLOR)
+            if (BlurRisk.isRisky(motion.shake, meta, zoomRatio)) add(Condition.TEMBLOR)
             if (subjectSpeed > MOVING_THRESHOLD) add(Condition.MOVIMIENTO)
             if (light.highlightClip > 0.08f && !backlit) add(Condition.LUCES_QUEMADAS)
         }
@@ -266,7 +281,6 @@ class PerceptionAnalyzer(
         private const val MIN_FRAME_INTERVAL_MS = 66L
         private const val OBJECTS_INTERVAL_MS = 100L
         private const val LABELS_INTERVAL_MS = 450L
-        private const val SHAKE_THRESHOLD = 0.25f
         private const val MOVING_THRESHOLD = 0.35f
 
         private val SPANISH = mapOf(

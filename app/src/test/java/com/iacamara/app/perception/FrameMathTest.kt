@@ -34,6 +34,17 @@ class FrameMathTest {
     }
 
     @Test
+    fun temblorSoloImportaConExposicionesLargas() {
+        val dia = CaptureMeta(iso = 50, exposureNs = 1_000_000L, aperture = 1.8f, focusDistanceCm = null, timestampMs = 0L)
+        val interior = CaptureMeta(iso = 800, exposureNs = 33_000_000L, aperture = 1.8f, focusDistanceCm = null, timestampMs = 0L)
+        // Mano normal (0,3 rad/s): de día (1/1000 s) no se nota; en interior (1/30 s) sí.
+        assertEquals(false, BlurRisk.isRisky(0.3f, dia, 1f))
+        assertEquals(true, BlurRisk.isRisky(0.3f, interior, 1f))
+        // Con zoom 3x el mismo temblor se nota más.
+        assert(BlurRisk.blurPixels(0.1f, 4_000_000L, 3f) > BlurRisk.blurPixels(0.1f, 4_000_000L, 1f))
+    }
+
+    @Test
     fun rotacionDelModeloSegunCamara() {
         assertEquals(90, FrameMath.modelRotation(90, front = false))
         assertEquals(270, FrameMath.modelRotation(90, front = true))
