@@ -97,7 +97,7 @@ private fun DrawScope.drawBrackets(r: Rect) {
 /** Escena detectada, condiciones y ajuste automático aplicado. */
 @Composable
 fun SceneBadge(perception: Perception, reason: String?, modifier: Modifier = Modifier) {
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.Start) {
         Text(
             text = "${perception.scene.emoji} ${perception.scene.label}",
             color = Color.White,
@@ -118,7 +118,7 @@ fun SceneBadge(perception: Perception, reason: String?, modifier: Modifier = Mod
                 text = detail,
                 color = Amber,
                 fontSize = 11.sp,
-                textAlign = TextAlign.Center,
+                textAlign = TextAlign.Start,
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
                     .background(Color.Black.copy(alpha = 0.5f))

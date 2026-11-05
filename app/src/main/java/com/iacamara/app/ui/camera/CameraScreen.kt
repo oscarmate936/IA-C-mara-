@@ -18,6 +18,8 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -116,6 +118,7 @@ import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.sqrt
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CameraScreen(onOpenDiagnostics: () -> Unit) {
     val context = LocalContext.current
@@ -524,85 +527,10 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
             // Con la IA activa, la rejilla es la guía que elige la IA (o la que fijes); sin IA, tercios.
             if (showGrid && !coachActive) GridOverlay()
             if (showLevel) LevelOverlay(levelState)
-            if (iaEnabled && state.analysisActive && currentPerception != null) {
+            val iaActive = iaEnabled && state.analysisActive && currentPerception != null
+            if (iaActive && currentPerception != null) {
                 SubjectOverlay(currentPerception, front = state.lens == Lens.FRONT)
-                guidance?.let { g ->
-                    CompositionOverlay(g, front = state.lens == Lens.FRONT, showGuide = showGrid)
-                    ScoreBadge(
-                        score = g.score,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(10.dp),
-                    )
-                    GuideChip(
-                        style = g.style,
-                        forced = forcedGuide,
-                        onSelect = { choice ->
-                            forcedGuide = choice
-                            prefs.guide = choice?.name
-                            guideStabilizer.reset()
-                        },
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 64.dp, end = 10.dp),
-                    )
-                }
-                SceneBadge(
-                    perception = currentPerception,
-                    reason = direction?.reason,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 40.dp),
-                )
-                // Prioridad: consejo con acción > corrección del encuadre > "buen encuadre" > consejo de escena.
-                val g = guidance
-                val tipToShow = direction?.tip?.takeIf { it.action != null }
-                    ?: g?.message?.let { Tip(it) }
-                    ?: (if (g?.isGood == true) Tip("Buen encuadre: ¡dispara!") else null)
-                    ?: direction?.tip
-                tipToShow?.let { tip ->
-                    TipChip(
-                        tip = tip,
-                        onAction = {
-                            when (val action = tip.action) {
-                                is TipAction.SwitchMode -> engine.setMode(action.mode)
-                                is TipAction.SetZoom -> engine.setZoom(action.ratio)
-                                null -> Unit
-                            }
-                        },
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 64.dp, start = 16.dp, end = 16.dp),
-                    )
-                }
-            }
-            if (showHistogram) {
-                currentPerception?.light?.let { light ->
-                    HistogramPanel(
-                        light = light,
-                        frameMs = currentPerception.frameMs,
-                        timings = currentPerception.timings,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 100.dp, end = 10.dp),
-                    )
-                }
-            }
-            if (iaEnabled && state.ready && !state.analysisActive) {
-                SmallNotice(
-                    "IA en pausa en este modo",
-                    Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 40.dp),
-                )
-            }
-            iaError?.let { error ->
-                SmallNotice(
-                    error,
-                    Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 112.dp, start = 16.dp, end = 16.dp),
-                )
+                guidance?.let { g -> CompositionOverlay(g, front = state.lens == Lens.FRONT, showGuide = showGrid) }
             }
             FocusRing(focusPoint, focusKey)
 
@@ -614,18 +542,63 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                     .background(Color.White),
             )
 
-            // Información: resolución real y modo.
+            // Textos del visor, ordenados para que nunca se tapen:
+            // arriba a la izquierda el estado y la escena; arriba a la derecha la puntuación, la guía y el
+            // histograma; abajo el aviso, el consejo y el zoom, uno encima de otro.
             Row(
                 modifier = Modifier
                     .align(Alignment.TopStart)
+                    .fillMaxWidth()
                     .padding(10.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                state.captureMegapixels?.let { mp -> InfoChip(String.format(Locale.US, "%.0f MP", mp)) }
-                if (state.mode != PhotoMode.FOTO) InfoChip(state.mode.label)
-                if (smartShutter && iaEnabled) InfoChip("AUTO-DISPARO")
-                val plan = CaptureDirector.plan(state.mode, perception, iaEnabled, state.flash == FlashSetting.ON)
-                if (plan.strategy != CaptureStrategy.SINGLE && state.processing == null) InfoChip(plan.description)
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        state.captureMegapixels?.let { mp -> InfoChip(String.format(Locale.US, "%.0f MP", mp)) }
+                        if (state.mode != PhotoMode.FOTO) InfoChip(state.mode.label)
+                        if (smartShutter && iaEnabled) InfoChip("AUTO-DISPARO")
+                        val plan = CaptureDirector.plan(state.mode, perception, iaEnabled, state.flash == FlashSetting.ON)
+                        if (plan.strategy != CaptureStrategy.SINGLE && state.processing == null) InfoChip(plan.description)
+                    }
+                    if (iaActive && currentPerception != null) {
+                        SceneBadge(perception = currentPerception, reason = direction?.reason)
+                    }
+                    if (iaEnabled && state.ready && !state.analysisActive) SmallNotice("IA en pausa en este modo")
+                    iaError?.let { error -> SmallNotice(error) }
+                }
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    val g = guidance
+                    if (iaActive && g != null) {
+                        ScoreBadge(score = g.score)
+                        GuideChip(
+                            style = g.style,
+                            forced = forcedGuide,
+                            onSelect = { choice ->
+                                forcedGuide = choice
+                                prefs.guide = choice?.name
+                                guideStabilizer.reset()
+                            },
+                        )
+                    }
+                    if (showHistogram) {
+                        currentPerception?.light?.let { light ->
+                            HistogramPanel(
+                                light = light,
+                                frameMs = currentPerception.frameMs,
+                                timings = currentPerception.timings,
+                            )
+                        }
+                    }
+                }
             }
 
             // Foto computacional en curso: primero se capturan las fotos, luego se procesan.
@@ -639,31 +612,54 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 )
             }
 
-            state.message?.let { message ->
-                Text(
-                    text = message,
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 112.dp, start = 16.dp, end = 16.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xCCB00020))
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                )
-            }
-
-            ZoomBar(
-                zoom = state.zoomRatio,
-                minZoom = state.minZoom,
-                maxZoom = state.maxZoom,
-                rotation = iconRotation,
-                onSelect = { engine.setZoom(it) },
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 12.dp),
-            )
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                state.message?.let { message ->
+                    Text(
+                        text = message,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xCCB00020))
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+                if (iaActive) {
+                    // Prioridad: consejo con acción > corrección del encuadre > "buen encuadre" > consejo de escena.
+                    val g = guidance
+                    val tipToShow = direction?.tip?.takeIf { it.action != null }
+                        ?: g?.message?.let { Tip(it) }
+                        ?: (if (g?.isGood == true) Tip("Buen encuadre: ¡dispara!") else null)
+                        ?: direction?.tip
+                    tipToShow?.let { tip ->
+                        TipChip(
+                            tip = tip,
+                            onAction = {
+                                when (val action = tip.action) {
+                                    is TipAction.SwitchMode -> engine.setMode(action.mode)
+                                    is TipAction.SetZoom -> engine.setZoom(action.ratio)
+                                    null -> Unit
+                                }
+                            },
+                        )
+                    }
+                }
+                ZoomBar(
+                    zoom = state.zoomRatio,
+                    minZoom = state.minZoom,
+                    maxZoom = state.maxZoom,
+                    rotation = iconRotation,
+                    onSelect = { engine.setZoom(it) },
+                )
+            }
         }
 
         // Modos y controles inferiores.
