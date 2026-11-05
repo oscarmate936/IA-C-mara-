@@ -69,6 +69,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.iacamara.app.ShutterKeys
@@ -159,6 +161,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
     LaunchedEffect(Unit) {
         engine.setAnalyzer(analyzer)
         engine.eyeScorer = { bitmap -> analyzer.eyesOpenScore(bitmap) }
+        engine.aestheticScorer = { bitmap -> analyzer.aestheticScore(bitmap) }
         engine.start(lifecycleOwner, previewView.surfaceProvider)
     }
     DisposableEffect(Unit) {
@@ -168,6 +171,18 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
             engine.release()
             analyzer.close()
         }
+    }
+    // Protección de la aceleración: se sabe si la app se cerró de golpe con la cámara a la vista.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> analyzer.setForeground(true)
+                Lifecycle.Event.ON_STOP -> analyzer.setForeground(false)
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     DisposableEffect(iaEnabled) {
         if (iaEnabled) motionSensor.start()
@@ -312,6 +327,8 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 deviceDegrees = deviceDegrees,
                 namedObjects = p.namedObjects,
                 structure = p.structure,
+                pose = p.pose,
+                aesthetic = p.aesthetic,
             )
             // La guía automática solo cambia si la escena la pide varias veces seguidas (sin parpadeos).
             val style = forcedGuide ?: guideStabilizer.update(CompositionEngine.chooseStyle(compositionInput))

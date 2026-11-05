@@ -11,7 +11,8 @@ coroutines = "1.10.2"
 # Versión comprobada en la compilación de la Fase 2 (5 nov 2026).
 mediapipe = "0.10.35"
 junit = "4.13.2"
-onnxruntime = "1.31.1"
+# Versión de ONNX Runtime con el motor QNN de Qualcomm (NPU y GPU del Snapdragon).
+onnxruntime = "1.29.0"
 exifinterface = "1.3.7"
 
 [libraries]
@@ -34,7 +35,7 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 mediapipe-tasks-vision = { group = "com.google.mediapipe", name = "tasks-vision", version.ref = "mediapipe" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-exifinterface = { group = "androidx.exifinterface", name = "exifinterface", version.ref = "exifinterface" }
-onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
+onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android-qnn", version.ref = "onnxruntime" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -33,10 +33,10 @@ class SceneRulesTest {
         front: Boolean = false,
         faces: List<NRect> = emptyList(),
         objects: List<DetectedObject> = emptyList(),
-        labels: List<Pair<String, Float>> = emptyList(),
+        clip: Map<SceneType, Float> = emptyMap(),
         light: LightInfo = light(),
         meta: CaptureMeta? = meta(12f),
-    ) = SceneInputs(front, faces, objects, labels, light, meta)
+    ) = SceneInputs(front, faces, objects, clip, light, meta)
 
     private val face = NRect(0.4f, 0.3f, 0.6f, 0.5f)
 
@@ -53,7 +53,7 @@ class SceneRulesTest {
 
     @Test fun comida() = assertEquals(
         SceneType.COMIDA,
-        SceneRules.classify(inputs(labels = listOf("pizza" to 0.6f))),
+        SceneRules.classify(inputs(clip = mapOf(SceneType.COMIDA to 0.7f))),
     )
 
     @Test fun noche() = assertEquals(SceneType.NOCHE, SceneRules.classify(inputs(meta = meta(2f))))
@@ -67,9 +67,30 @@ class SceneRulesTest {
         SceneRules.classify(inputs(light = light(mean = 200f, brightNeutral = 0.5f), meta = meta(14f))),
     )
 
-    @Test fun playa() = assertEquals(SceneType.PLAYA, SceneRules.classify(inputs(labels = listOf("seashore" to 0.5f))))
+    @Test fun playa() = assertEquals(SceneType.PLAYA, SceneRules.classify(inputs(clip = mapOf(SceneType.PLAYA to 0.6f))))
 
-    @Test fun arquitectura() = assertEquals(SceneType.CIUDAD, SceneRules.classify(inputs(labels = listOf("church" to 0.4f))))
+    @Test fun arquitectura() = assertEquals(SceneType.CIUDAD, SceneRules.classify(inputs(clip = mapOf(SceneType.CIUDAD to 0.7f))))
+
+    @Test fun atardecerSegunClip() = assertEquals(
+        SceneType.ATARDECER,
+        SceneRules.classify(inputs(clip = mapOf(SceneType.ATARDECER to 0.6f))),
+    )
+
+    @Test fun personaDeEspaldasEsRetratoSiClipLoConfirma() = assertEquals(
+        SceneType.RETRATO,
+        SceneRules.classify(
+            inputs(
+                objects = listOf(DetectedObject("person", NRect(0.35f, 0.3f, 0.6f, 0.6f), 0.8f)),
+                clip = mapOf(SceneType.RETRATO to 0.8f),
+            ),
+        ),
+    )
+
+    @Test fun clipSinDetectorNoInventaUnaMascota() = assertEquals(
+        // Un peluche que a CLIP le parece un perro: sin detección de animal, no es "mascota".
+        SceneType.OBJETO,
+        SceneRules.classify(inputs(clip = mapOf(SceneType.MASCOTA to 0.45f, SceneType.OBJETO to 0.55f))),
+    )
 
     @Test fun paisajePorCielo() = assertEquals(SceneType.PAISAJE, SceneRules.classify(inputs(light = light(skyBlue = 0.4f))))
 

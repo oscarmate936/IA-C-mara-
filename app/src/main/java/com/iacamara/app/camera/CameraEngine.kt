@@ -164,6 +164,8 @@ class CameraEngine(private val context: Context) {
      * o null si no hay caras. Lo proporciona la percepción (Face Landmarker).
      */
     var eyeScorer: ((Bitmap) -> Float?)? = null
+    /** Nota de estética (NIMA, 1–10) de una foto reducida y derecha, para la ráfaga. */
+    var aestheticScorer: ((Bitmap) -> Float?)? = null
     private var analyzer: ImageAnalysis.Analyzer? = null
     private val analysisExecutor = Executors.newSingleThreadExecutor()
 
@@ -447,17 +449,24 @@ class CameraEngine(private val context: Context) {
         val sources = frames.map { JpegFrameSource(it.jpeg) }
         try {
             val scorer = eyeScorer
-            val eyes = frames.indices.map { i ->
-                if (scorer == null) {
-                    null
-                } else {
-                    runCatching {
-                        val small = sources[i].decodeSmall(4).rotated(frames[i].rotationDegrees)
-                        scorer(small)
-                    }.getOrNull()
+            val beauty = aestheticScorer
+            val eyes = FloatArray(frames.size)
+            val aesthetic = arrayOfNulls<Float>(frames.size)
+            for (i in frames.indices) {
+                if (scorer == null && beauty == null) break
+                runCatching {
+                    val small = sources[i].decodeSmall(4).rotated(frames[i].rotationDegrees)
+                    eyes[i] = scorer?.invoke(small) ?: 0f
+                    aesthetic[i] = beauty?.invoke(small)
                 }
             }
-            val best = BurstPipeline.bestFrame(sources) { i -> (eyes[i] ?: 0f) * 2f }
+            // Nitidez primero, luego ojos abiertos; la estética (NIMA) desempata entre fotos parecidas.
+            val notes = aesthetic.filterNotNull()
+            val low = notes.minOrNull() ?: 0f
+            val range = maxOf(0.3f, (notes.maxOrNull() ?: 0f) - low)
+            val best = BurstPipeline.bestFrame(sources) { i ->
+                eyes[i] * 2f + (aesthetic[i]?.let { (it - low) / range * 0.3f } ?: 0f)
+            }
             return PhotoSaver.saveJpeg(context, frames[best].jpeg)
         } finally {
             sources.forEach { it.close() }

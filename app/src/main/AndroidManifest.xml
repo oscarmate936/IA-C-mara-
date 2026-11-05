@@ -20,6 +20,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.IACamara">
 
+        <!-- Acceso al chip de IA (NPU Hexagon) del Snapdragon. Si el móvil no lo tiene, se usa el procesador. -->
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

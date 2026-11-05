@@ -13,37 +13,100 @@ import com.iacamara.app.perception.DetectedObject
 import com.iacamara.app.perception.Letterbox
 import com.iacamara.app.perception.NRect
 import com.iacamara.app.perception.SaliencyMath
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 
-/** Un modelo ONNX cargado desde los assets del APK (ONNX Runtime, sin internet). */
-class OnnxModel(context: Context, assetPath: String, threads: Int = 4) : AutoCloseable {
+/**
+ * Un modelo ONNX cargado desde los assets del APK (ONNX Runtime, sin internet).
+ * Empieza en el procesador normal; el [Accelerator] puede cambiarlo después al NPU o a la GPU
+ * si da el mismo resultado y va más rápido.
+ */
+class OnnxModel(context: Context, private val assetPath: String, val key: String, private val threads: Int = 4) : AutoCloseable {
+    /** Una entrada real del modelo, para probar los aceleradores con imágenes de verdad. */
+    class Sample(val data: FloatArray, val shape: LongArray)
+
+    private val appContext = context.applicationContext
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
-    private val session: OrtSession
+    private val lock = Any()
+    private var session: OrtSession
     private val inputName: String
+    private var closed = false
+
+    @Volatile var backend: Backend = Backend.CPU
+        private set
+
+    @Volatile private var sampleWanted = false
+    @Volatile private var lastSample: Sample? = null
 
     init {
-        val bytes = context.assets.open(assetPath).use { it.readBytes() }
-        val options = OrtSession.SessionOptions().apply {
-            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-            setIntraOpNumThreads(threads)
-        }
-        session = env.createSession(bytes, options)
+        session = Sessions.create(appContext, env, readBytes(), Backend.CPU, threads)
         inputName = session.inputNames.first()
     }
 
+    private fun readBytes(): ByteArray = appContext.assets.open(assetPath).use { it.readBytes() }
+
     /** Ejecuta el modelo y devuelve su primera salida (arrays de Java de varias dimensiones). */
     fun runFirst(data: FloatBuffer, shape: LongArray): Any {
-        OnnxTensor.createTensor(env, data, shape).use { tensor ->
-            session.run(mapOf(inputName to tensor)).use { result ->
-                return result.get(0).value
-            }
+        if (sampleWanted && lastSample == null) {
+            val copy = FloatArray(data.limit())
+            data.duplicate().apply { position(0) }.get(copy)
+            lastSample = Sample(copy, shape.copyOf())
+        }
+        synchronized(lock) {
+            check(!closed) { "modelo cerrado" }
+            return runOn(session, data, shape)
         }
     }
 
+    private fun runOn(s: OrtSession, data: FloatBuffer, shape: LongArray): Any =
+        OnnxTensor.createTensor(env, data, shape).use { tensor ->
+            s.run(mapOf(inputName to tensor)).use { result -> result.get(0).value }
+        }
+
+    fun requestSample() {
+        sampleWanted = true
+    }
+
+    fun sample(): Sample? = lastSample
+
+    /** Ejecuta una muestra en `s`, o en la sesión actual si es null. */
+    fun runSample(s: OrtSession?, sample: Sample): Any {
+        val data = FloatBuffer.wrap(sample.data)
+        if (s != null) return runOn(s, data, sample.shape)
+        synchronized(lock) {
+            check(!closed) { "modelo cerrado" }
+            return runOn(session, data, sample.shape)
+        }
+    }
+
+    fun createSession(backend: Backend, cache: File?): OrtSession =
+        Sessions.create(appContext, env, readBytes(), backend, threads, cache)
+
+    /** Cambia de acelerador entre dos ejecuciones (nunca a mitad de una). */
+    fun swap(newSession: OrtSession, newBackend: Backend) {
+        val old: OrtSession
+        synchronized(lock) {
+            if (closed) {
+                newSession.close()
+                return
+            }
+            old = session
+            session = newSession
+            backend = newBackend
+            lastSample = null
+            sampleWanted = false
+        }
+        old.close()
+    }
+
     override fun close() {
-        session.close()
+        synchronized(lock) {
+            if (closed) return
+            closed = true
+            session.close()
+        }
     }
 }
 

@@ -12,13 +12,21 @@ import androidx.camera.core.ImageProxy
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.framework.image.MPImage
 import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.facedetector.FaceDetector
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker
-import com.google.mediapipe.tasks.vision.imageclassifier.ImageClassifier
+import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
+import com.iacamara.app.perception.onnx.AcceleratorStore
+import com.iacamara.app.perception.onnx.Accelerator
+import com.iacamara.app.perception.onnx.AestheticScorer
+import com.iacamara.app.perception.onnx.Backend
+import com.iacamara.app.perception.onnx.ClipSceneClassifier
 import com.iacamara.app.perception.onnx.OnnxModel
+import com.iacamara.app.perception.onnx.OutputCheck
 import com.iacamara.app.perception.onnx.SaliencyDetector
 import com.iacamara.app.perception.onnx.YoloDetector
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,8 +37,10 @@ import kotlin.math.hypot
  *
  * - Caras (MediaPipe BlazeFace): en cada fotograma.
  * - Ojos y mirada (MediaPipe Face Landmarker): ~4 veces por segundo si hay caras.
- * - Tipo de escena (MediaPipe EfficientNet, 1000 clases): ~2 veces por segundo.
- * - Objetos (YOLO11n, 80 clases): ~5 veces por segundo.
+ * - Cuerpo (MediaPipe Pose, 33 puntos): ~4 veces por segundo si hay personas.
+ * - Tipo de escena (CLIP pequeño, descripciones de 14 tipos de escena): ~2 veces por segundo.
+ * - Estética (NIMA, nota 1–10): ~1 vez por segundo.
+ * - Objetos (YOLO11n; YOLO11s si el móvil acelera la IA): ~5 veces por segundo.
  * - Vocabulario abierto (YOLOE con ~120 cosas habituales en fotos): ~1 vez por segundo; da nombre
  *   a lo que YOLO11 no conoce y anula sus confusiones.
  * - Saliencia (U²-Net): ~1–2 veces por segundo; encuentra "lo importante" aunque no tenga nombre.
@@ -39,6 +49,9 @@ import kotlin.math.hypot
  *
  * Cada modelo se espacia solo según lo que tarda en este móvil y si se calienta, y en cada fotograma
  * se ejecuta como mucho un modelo pesado, para que el visor vaya fluido.
+ *
+ * Aceleración: los modelos ONNX empiezan en el procesador y el [Accelerator] prueba en segundo plano
+ * el NPU y la GPU del Snapdragon; los de MediaPipe intentan la GPU. Si algo falla, procesador normal.
  */
 class PerceptionAnalyzer(
     context: Context,
@@ -60,16 +73,53 @@ class PerceptionAnalyzer(
     @Volatile var deviceDegrees: Int = 0
     @Volatile var zoomRatio: Float = 1f
 
+    // Aceleración (NPU/GPU) con vuelta al procesador normal.
+    private val acceleratorStore = AcceleratorStore(appContext)
+    private val accelerator = Accelerator(appContext, acceleratorStore)
+    @Volatile private var foreground = false
+    @Volatile private var closedModels = false
+
     // MediaPipe
     private var faceDetector: FaceDetector? = null
-    private var faceLandmarker: FaceLandmarker? = null
-    private var classifier: ImageClassifier? = null
+    private val faceLandmarker = MpModel("ojos", acceleratorStore) { delegate ->
+        FaceLandmarker.createFromOptions(
+            appContext,
+            FaceLandmarker.FaceLandmarkerOptions.builder()
+                .setBaseOptions(base(LANDMARKS_MODEL, delegate))
+                .setRunningMode(RunningMode.IMAGE)
+                .setNumFaces(5)
+                .setOutputFaceBlendshapes(true)
+                .setMinFaceDetectionConfidence(0.5f)
+                .build(),
+        )
+    }
+    private val poseLandmarker = MpModel("pose", acceleratorStore) { delegate ->
+        PoseLandmarker.createFromOptions(
+            appContext,
+            PoseLandmarker.PoseLandmarkerOptions.builder()
+                .setBaseOptions(base(POSE_MODEL, delegate))
+                .setRunningMode(RunningMode.IMAGE)
+                .setNumPoses(1)
+                .setMinPoseDetectionConfidence(0.5f)
+                .setMinPosePresenceConfidence(0.5f)
+                .build(),
+        )
+    }
 
     // ONNX Runtime
-    private val onnxModels = mutableListOf<OnnxModel>()
-    private var yolo: YoloDetector? = null
+    private val onnxModels = CopyOnWriteArrayList<OnnxModel>()
+    @Volatile private var yolo: YoloDetector? = null
+    @Volatile private var yoloModel: OnnxModel? = null
+    @Volatile private var yoloName = "YOLO11n"
+    private var yoloLabels: List<String> = emptyList()
     private var yoloe: YoloDetector? = null
+    private var yoloeModel: OnnxModel? = null
     private var saliencyDetector: SaliencyDetector? = null
+    private var saliencyModel: OnnxModel? = null
+    private var clip: ClipSceneClassifier? = null
+    private var clipModel: OnnxModel? = null
+    private var aestheticScorer: AestheticScorer? = null
+    private var aestheticModel: OnnxModel? = null
     private var yoloeSpanish: Map<String, String> = emptyMap()
     private var initialized = false
 
@@ -81,6 +131,8 @@ class PerceptionAnalyzer(
 
     private val labelsClock = TaskClock(450, 3f)
     private val landmarksClock = TaskClock(250, 3f)
+    private val poseClock = TaskClock(250, 3f)
+    private val aestheticClock = TaskClock(1000, 6f)
     private val yoloClock = TaskClock(180, 2.5f)
     private val yoloeClock = TaskClock(900, 4f)
     private val saliencyClock = TaskClock(600, 4f)
@@ -95,7 +147,9 @@ class PerceptionAnalyzer(
     // Últimos resultados (coordenadas del fotograma del modelo, M).
     private var lastObjects: List<DetectedObject> = emptyList()
     private var lastOpenVocab: List<DetectedObject> = emptyList()
-    private var lastLabels: List<Pair<String, Float>> = emptyList()
+    private var lastSceneScores: Map<SceneType, Float> = emptyMap()
+    private var lastPose: BodyPose? = null
+    private var lastAesthetic: Float? = null
     private var animalEvidence = true
     private var lastSaliencyGrid: FloatArray? = null
     private var lastSaliencyW = 0
@@ -115,49 +169,106 @@ class PerceptionAnalyzer(
             FaceDetector.createFromOptions(
                 appContext,
                 FaceDetector.FaceDetectorOptions.builder()
-                    .setBaseOptions(base(FACE_MODEL))
+                    .setBaseOptions(base(FACE_MODEL, Delegate.CPU))
                     .setRunningMode(RunningMode.IMAGE)
                     .setMinDetectionConfidence(0.5f)
                     .build(),
             )
         }
-        faceLandmarker = load("ojos", failures) {
-            FaceLandmarker.createFromOptions(
-                appContext,
-                FaceLandmarker.FaceLandmarkerOptions.builder()
-                    .setBaseOptions(base(LANDMARKS_MODEL))
-                    .setRunningMode(RunningMode.IMAGE)
-                    .setNumFaces(5)
-                    .setOutputFaceBlendshapes(true)
-                    .setMinFaceDetectionConfidence(0.5f)
-                    .build(),
-            )
-        }
-        classifier = load("escenas", failures) {
-            ImageClassifier.createFromOptions(
-                appContext,
-                ImageClassifier.ImageClassifierOptions.builder()
-                    .setBaseOptions(base(SCENE_MODEL))
-                    .setRunningMode(RunningMode.IMAGE)
-                    .setMaxResults(5)
-                    .setScoreThreshold(0.05f)
-                    .build(),
-            )
-        }
+        load("ojos", failures) { faceLandmarker.load() }
+        load("cuerpo", failures) { poseLandmarker.load() }
         yolo = load("objetos", failures) {
-            val labels = readLines(YOLO_LABELS)
-            YoloDetector(onnx(YOLO_MODEL), 512, labels)
+            yoloLabels = readLines(YOLO_LABELS)
+            val model = onnx(YOLO_MODEL, "yolo11n")
+            yoloModel = model
+            YoloDetector(model, 512, yoloLabels)
         }
         yoloe = load("vocabulario abierto", failures) {
             val rows = readLines(YOLOE_LABELS).map { it.split('\t') }
             yoloeSpanish = rows.associate { cols -> cols[0] to (cols.getOrNull(1) ?: cols[0]) }
-            YoloDetector(onnx(YOLOE_MODEL), 480, rows.map { cols -> cols[0] })
+            val model = onnx(YOLOE_MODEL, "yoloe")
+            yoloeModel = model
+            YoloDetector(model, 480, rows.map { cols -> cols[0] })
         }
-        saliencyDetector = load("sujeto principal", failures) { SaliencyDetector(onnx(SALIENCY_MODEL)) }
+        saliencyDetector = load("sujeto principal", failures) {
+            onnx(SALIENCY_MODEL, "u2netp").let { saliencyModel = it; SaliencyDetector(it) }
+        }
+        clip = load("escenas", failures) {
+            onnx(CLIP_MODEL, "clip").let { clipModel = it; ClipSceneClassifier.load(appContext, it, CLIP_TEXT, CLIP_NAMES) }
+        }
+        aestheticScorer = load("estética", failures) {
+            onnx(NIMA_MODEL, "nima").let { aestheticModel = it; AestheticScorer(it) }
+        }
         if (failures.isNotEmpty()) _error.value = "IA incompleta · " + failures.joinToString(" · ")
+        updateActive()
+        startAcceleration()
     }
 
-    private fun onnx(path: String): OnnxModel = OnnxModel(appContext, path).also { onnxModels += it }
+    /** Prueba en segundo plano el NPU y la GPU con cada modelo (o activa lo que ya funcionó antes). */
+    private fun startAcceleration() {
+        val detections = { a: Any, b: Any -> OutputCheck.sameDetections(a, b) }
+        yoloModel?.let { model ->
+            accelerator.optimize(
+                Accelerator.Job(model, detections) { backend, _ ->
+                    updateActive()
+                    if (backend != Backend.CPU) tryBiggerDetector(model)
+                },
+            )
+        }
+        yoloeModel?.let { accelerator.optimize(Accelerator.Job(it, detections) { _, _ -> updateActive() }) }
+        saliencyModel?.let {
+            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.similar(a, b, 0.95f) }) { _, _ -> updateActive() })
+        }
+        clipModel?.let {
+            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.similar(a, b, 0.98f) }) { _, _ -> updateActive() })
+        }
+        aestheticModel?.let {
+            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.sameMeanScore(a, b) }) { _, _ -> updateActive() })
+        }
+    }
+
+    /**
+     * Si el móvil acelera la IA, prueba YOLO11s (más preciso que YOLO11n). Solo se queda si va en el
+     * NPU o la GPU, da los mismos resultados que en el procesador y tarda como mucho 40 ms.
+     */
+    private fun tryBiggerDetector(small: OnnxModel) {
+        if (acceleratorStore.chosen(YOLO_S_KEY) == Backend.CPU) return
+        val big = runCatching { OnnxModel(appContext, YOLO_S_MODEL, YOLO_S_KEY) }.getOrNull() ?: return
+        accelerator.optimize(
+            Accelerator.Job(
+                model = big,
+                check = { a, b -> OutputCheck.sameDetections(a, b) },
+                accept = { backend, ms, _ -> backend != Backend.CPU && ms <= 40f },
+                sampleFrom = small,
+            ) { backend, _ ->
+                if (backend == Backend.CPU || closedModels) {
+                    big.close()
+                } else {
+                    onnxModels += big
+                    yolo = YoloDetector(big, 512, yoloLabels)
+                    yoloModel = big
+                    yoloName = "YOLO11s"
+                    onnxModels -= small
+                    small.close()
+                    updateActive()
+                }
+            },
+        )
+    }
+
+    /** Hay algún modelo acelerado con la cámara a la vista (para la protección contra cierres). */
+    private fun updateActive() {
+        val accelerated = onnxModels.any { it.backend != Backend.CPU } || faceLandmarker.onGpu || poseLandmarker.onGpu
+        acceleratorStore.setActive(foreground && accelerated)
+    }
+
+    /** La cámara se ve (true) o la app pasa a segundo plano (false). */
+    fun setForeground(value: Boolean) {
+        foreground = value
+        updateActive()
+    }
+
+    private fun onnx(path: String, key: String): OnnxModel = OnnxModel(appContext, path, key).also { onnxModels += it }
 
     private fun readLines(path: String): List<String> =
         appContext.assets.open(path).bufferedReader().readLines().filter { it.isNotBlank() }
@@ -172,7 +283,8 @@ class PerceptionAnalyzer(
         null
     }
 
-    private fun base(path: String): BaseOptions = BaseOptions.builder().setModelAssetPath(path).build()
+    private fun base(path: String, delegate: Delegate): BaseOptions =
+        BaseOptions.builder().setModelAssetPath(path).setDelegate(delegate).build()
 
     @Synchronized
     override fun analyze(image: ImageProxy) {
@@ -210,9 +322,10 @@ class PerceptionAnalyzer(
         lastOpenVocab = emptyList()
         lastSaliencyGrid = null
         lastFaceDetails = emptyList()
+        lastPose = null
         structureStabilizer.clear()
         lastStructure = null
-        listOf(yoloClock, yoloeClock, saliencyClock, landmarksClock, structureClock).forEach { it.reset() }
+        listOf(yoloClock, yoloeClock, saliencyClock, landmarksClock, structureClock, poseClock).forEach { it.reset() }
     }
 
     private fun process(bitmap: Bitmap, modelRotation: Int, front: Boolean, now: Long) {
@@ -225,14 +338,26 @@ class PerceptionAnalyzer(
         val faces = faceDetector?.detect(mpImage)?.detections().orEmpty()
             .map { normalize(it.boundingBox(), w, h) }
 
-        // Tareas medianas.
-        if (labelsClock.overdue(now, slowdown) >= 1f) {
-            timed(labelsClock, now) { runClassifier(mpImage) }
+        // Tareas medianas: escena (CLIP) o estética (NIMA), la que más atrasada vaya.
+        val medium = listOfNotNull(
+            clip?.let { "escena" to labelsClock.overdue(now, slowdown) },
+            aestheticScorer?.let { "estética" to aestheticClock.overdue(now, slowdown) },
+        ).filter { it.second >= 1f }.maxByOrNull { it.second }?.first
+        when (medium) {
+            "escena" -> timed(labelsClock, now) { runClip(bitmap) }
+            "estética" -> timed(aestheticClock, now) { runAesthetic(bitmap) }
         }
         if (faces.isNotEmpty() && landmarksClock.overdue(now, slowdown) >= 1f) {
             timed(landmarksClock, now) { runLandmarks(mpImage) }
         } else if (faces.isEmpty()) {
             lastFaceDetails = emptyList()
+        }
+        // Cuerpo: solo si hay personas a la vista.
+        val people = faces.isNotEmpty() || lastObjects.any { it.label == "person" }
+        if (people && poseClock.overdue(now, slowdown) >= 1f) {
+            timed(poseClock, now) { runPose(mpImage) }
+        } else if (!people) {
+            lastPose = null
         }
 
         // Como mucho una tarea pesada por fotograma: la que más atrasada vaya.
@@ -263,7 +388,7 @@ class PerceptionAnalyzer(
         val meta = captureMetadata.current()
 
         val scene = sceneStabilizer.update(
-            SceneRules.classify(SceneInputs(front, faces, lastObjects, lastLabels, light, meta)),
+            SceneRules.classify(SceneInputs(front, faces, lastObjects, lastSceneScores, light, meta)),
         )
 
         updateSubjectSpeed(subjectInModel, now)
@@ -289,20 +414,27 @@ class PerceptionAnalyzer(
             faces = faces.map(toP),
             light = light,
             meta = meta,
-            labels = lastLabels.take(3).map { it.first },
+            labels = lastSceneScores.entries.sortedByDescending { it.value }.take(3)
+                .map { "${it.key.label} ${(it.value * 100).toInt()} %" },
             frameMs = SystemClock.elapsedRealtime() - start,
             timestampMs = now,
             saliency = saliencyP,
             faceDetails = lastFaceDetails.map { it.copy(box = toP(it.box)) },
             namedObjects = lastOpenVocab.map { it.copy(label = spanishOpen(it.label), box = toP(it.box)) },
             timings = mapOf(
-                "YOLO" to yoloClock.averageMs.toInt(),
-                "YOLOE" to yoloeClock.averageMs.toInt(),
-                "Saliencia" to saliencyClock.averageMs.toInt(),
-                "Ojos" to landmarksClock.averageMs.toInt(),
-                "Líneas" to structureClock.averageMs.toInt(),
+                "$yoloName ${backendOf(yoloModel)}" to yoloClock.averageMs.toInt(),
+                "YOLOE ${backendOf(yoloeModel)}" to yoloeClock.averageMs.toInt(),
+                "Saliencia ${backendOf(saliencyModel)}" to saliencyClock.averageMs.toInt(),
+                "Escena ${backendOf(clipModel)}" to labelsClock.averageMs.toInt(),
+                "Estética ${backendOf(aestheticModel)}" to aestheticClock.averageMs.toInt(),
+                "Ojos ${faceLandmarker.label}" to landmarksClock.averageMs.toInt(),
+                "Cuerpo ${poseLandmarker.label}" to poseClock.averageMs.toInt(),
+                "Líneas CPU" to structureClock.averageMs.toInt(),
             ),
             structure = lastStructure?.map { x, y -> FrameMath.unrotate(x, y, modelRotation) },
+            pose = lastPose?.map { x, y -> FrameMath.unrotate(x, y, modelRotation) },
+            sceneScores = lastSceneScores,
+            aesthetic = lastAesthetic,
         )
     }
 
@@ -316,17 +448,37 @@ class PerceptionAnalyzer(
         clock.record(now, SystemClock.elapsedRealtime() - t)
     }
 
-    private fun runClassifier(mpImage: MPImage) {
-        val categories = classifier?.classify(mpImage)?.classificationResult()?.classifications()
-            ?.firstOrNull()?.categories().orEmpty()
-        lastLabels = categories.map { it.categoryName() to it.score() }
-        // En ImageNet las clases 0–397 son animales: sirve para confirmar lo que dicen los detectores.
-        animalEvidence = classifier == null ||
-            categories.any { it.index() < IMAGENET_LAST_ANIMAL && it.score() >= 0.05f }
+    private fun backendOf(model: OnnxModel?): String = model?.backend?.label ?: "—"
+
+    private fun runClip(bitmap: Bitmap) {
+        val scores = clip?.classify(bitmap) ?: return
+        lastSceneScores = scores
+        // CLIP también confirma si hay un animal (para descartar "animales" dudosos de YOLO11).
+        animalEvidence = (scores[SceneType.MASCOTA] ?: 0f) >= 0.05f
+    }
+
+    private fun runAesthetic(bitmap: Bitmap) {
+        val score = aestheticScorer?.score(bitmap) ?: return
+        // Suavizada: la nota de un solo fotograma baila un poco.
+        lastAesthetic = lastAesthetic?.let { it + 0.4f * (score - it) } ?: score
+    }
+
+    private fun runPose(mpImage: MPImage) {
+        val result = poseLandmarker.run { it.detect(mpImage) } ?: return
+        val points = result.landmarks().firstOrNull()
+        if (points == null || points.size < BodyPose.COUNT) {
+            lastPose = null
+            return
+        }
+        lastPose = BodyPose(
+            xs = FloatArray(BodyPose.COUNT) { points[it].x() },
+            ys = FloatArray(BodyPose.COUNT) { points[it].y() },
+            visibility = FloatArray(BodyPose.COUNT) { points[it].visibility().orElse(0f) },
+        )
     }
 
     private fun runLandmarks(mpImage: MPImage) {
-        val result = faceLandmarker?.detect(mpImage) ?: return
+        val result = faceLandmarker.run { it.detect(mpImage) } ?: return
         val shapes = result.faceBlendshapes().orElse(null)
         lastFaceDetails = result.faceLandmarks().mapIndexedNotNull { k, points ->
             if (points.size < 2) return@mapIndexedNotNull null
@@ -466,8 +618,8 @@ class PerceptionAnalyzer(
      */
     @Synchronized
     fun eyesOpenScore(bitmap: Bitmap): Float? {
-        val landmarker = faceLandmarker ?: return null
-        val shapes = landmarker.detect(BitmapImageBuilder(bitmap).build()).faceBlendshapes().orElse(null) ?: return null
+        val result = faceLandmarker.run { it.detect(BitmapImageBuilder(bitmap).build()) } ?: return null
+        val shapes = result.faceBlendshapes().orElse(null) ?: return null
         if (shapes.isEmpty()) return null
         val open = shapes.count { face ->
             val left = face.firstOrNull { it.categoryName() == "eyeBlinkLeft" }?.score() ?: 0f
@@ -477,36 +629,49 @@ class PerceptionAnalyzer(
         return open / shapes.size.toFloat()
     }
 
+    /** Para elegir la mejor foto de una ráfaga: nota de estética (NIMA) de una foto reducida y derecha. */
+    @Synchronized
+    fun aestheticScore(bitmap: Bitmap): Float? = runCatching { aestheticScorer?.score(bitmap) }.getOrNull()
+
     /** Espera a que termine el fotograma en curso antes de liberar los modelos. */
     @Synchronized
     fun close() {
         enabled = false
+        closedModels = true
+        foreground = false
+        acceleratorStore.setActive(false)
+        accelerator.close()
         runCatching { faceDetector?.close() }
-        runCatching { faceLandmarker?.close() }
-        runCatching { classifier?.close() }
+        faceLandmarker.close()
+        poseLandmarker.close()
         onnxModels.forEach { runCatching { it.close() } }
         onnxModels.clear()
         faceDetector = null
-        faceLandmarker = null
-        classifier = null
         yolo = null
         yoloe = null
         saliencyDetector = null
+        clip = null
+        aestheticScorer = null
     }
 
     companion object {
         private const val TAG = "Percepcion"
         private const val FACE_MODEL = "models/blaze_face_short_range.tflite"
         private const val LANDMARKS_MODEL = "models/face_landmarker.task"
-        private const val SCENE_MODEL = "models/efficientnet_lite0.tflite"
+        private const val POSE_MODEL = "models/pose_landmarker_lite.task"
+        private const val CLIP_MODEL = "models/clip_image.onnx"
+        private const val CLIP_TEXT = "models/clip_scenes.bin"
+        private const val CLIP_NAMES = "models/clip_scenes.tsv"
+        private const val NIMA_MODEL = "models/nima_aesthetic.onnx"
         private const val YOLO_MODEL = "models/yolo11n.onnx"
+        private const val YOLO_S_MODEL = "models/yolo11s.onnx"
+        private const val YOLO_S_KEY = "yolo11s"
         private const val YOLO_LABELS = "models/yolo11n_labels.txt"
         private const val YOLOE_MODEL = "models/yoloe_vocab.onnx"
         private const val YOLOE_LABELS = "models/yoloe_labels.tsv"
         private const val SALIENCY_MODEL = "models/u2netp.onnx"
         private const val MIN_FRAME_INTERVAL_MS = 66L
         private const val MOVING_THRESHOLD = 0.35f
-        private const val IMAGENET_LAST_ANIMAL = 398
         private const val EYE_CLOSED = 0.5f
         private const val OPEN_VOCAB_MIN = 0.25f
         private const val STRUCTURE_SIZE = 160f
@@ -534,5 +699,59 @@ class PerceptionAnalyzer(
 
         fun spanish(label: String): String =
             SPANISH[label] ?: label.replaceFirstChar { it.uppercase() }
+    }
+}
+
+/**
+ * Un modelo de MediaPipe que intenta usar la GPU y vuelve al procesador si falla. La primera
+ * ejecución en GPU va con la marca de protección: si el controlador de la gráfica cierra la app,
+ * al volver a abrirla se usa el procesador.
+ */
+private class MpModel<T : AutoCloseable>(
+    private val key: String,
+    private val store: AcceleratorStore,
+    private val factory: (Delegate) -> T,
+) {
+    @Volatile private var model: T? = null
+    @Volatile var onGpu = false
+        private set
+    private var verified = false
+
+    val label: String get() = if (onGpu) "GPU" else "CPU"
+
+    fun load() {
+        if (!store.disabled && !store.isBroken(key, Backend.GPU)) {
+            val gpu = runCatching { store.guarded(key, Backend.GPU) { factory(Delegate.GPU) } }
+            gpu.getOrNull()?.let {
+                model = it
+                onGpu = true
+                return
+            }
+            store.markBroken(key, Backend.GPU)
+        }
+        model = factory(Delegate.CPU)
+        onGpu = false
+    }
+
+    fun <R> run(block: (T) -> R): R? {
+        val m = model ?: return null
+        if (onGpu && !verified) {
+            return try {
+                store.guarded(key, Backend.GPU) { block(m) }.also { verified = true }
+            } catch (e: Throwable) {
+                Log.w("Percepcion", "$key no funciona en la GPU: se usa el procesador", e)
+                store.markBroken(key, Backend.GPU)
+                runCatching { m.close() }
+                onGpu = false
+                model = runCatching { factory(Delegate.CPU) }.getOrNull()
+                null
+            }
+        }
+        return block(m)
+    }
+
+    fun close() {
+        runCatching { model?.close() }
+        model = null
     }
 }

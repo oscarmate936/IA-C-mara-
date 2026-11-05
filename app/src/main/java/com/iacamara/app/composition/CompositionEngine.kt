@@ -1,5 +1,6 @@
 package com.iacamara.app.composition
 
+import com.iacamara.app.perception.BodyPose
 import com.iacamara.app.perception.DetectedObject
 import com.iacamara.app.perception.FrameMath
 import com.iacamara.app.perception.NRect
@@ -43,6 +44,10 @@ data class CompositionInput(
     val structure: SceneStructure? = null,
     /** Guía que se usa; null = la elige la IA según la escena. */
     val style: GuideStyle? = null,
+    /** Puntos del cuerpo de la persona principal (coordenadas P). */
+    val pose: BodyPose? = null,
+    /** Nota de estética 1–10 (NIMA). */
+    val aesthetic: Float? = null,
 )
 
 /** Dirección en la que mover el móvil, desde el punto de vista del usuario. */
@@ -118,6 +123,7 @@ object CompositionEngine {
         // 3) Guía: la elegida por el usuario o la que mejor encaja con la escena.
         val box = input.subjectBox?.let { toViewRect(it, input) }
         val structure = viewStructure(input)
+        val pose = input.pose?.map { x, y -> toView(x, y, input) }
         val style = input.style ?: autoStyle(input, box, structure)
         val portrait = input.deviceDegrees % 180 == 0
         val shapes = mutableListOf<GuideShape>()
@@ -134,7 +140,7 @@ object CompositionEngine {
         var move: Move? = null
         if (box != null) {
             subjectCenterView = box.centerX to box.centerY
-            val placement = subjectTarget(box, input, style, portrait)
+            val placement = subjectTarget(box, input, style, portrait, pose?.let { eyesY(it, box) })
             target = placement.target
             placement.spiral?.let { shapes += GuideShape(ShapeKind.SPIRAL, it) }
             val distance = hypot(placement.target.first - box.centerX, placement.target.second - box.centerY)
@@ -154,6 +160,17 @@ object CompositionEngine {
             val cut = cutPenalty(box)
             criteria["sin cortes"] = 1f - cut
             if (cut > 0.3f) problems += Problem(1f - cut, 1.0f, "Estás cortando al sujeto: aléjate un poco o haz zoom hacia fuera")
+            // Con los puntos del cuerpo: no cortar por las articulaciones (rodillas, tobillos, codos, manos).
+            val people = input.subjectKind == SubjectKind.CARA || input.subjectKind == SubjectKind.PERSONA
+            if (people && pose != null) {
+                jointCut(pose)?.let { (value, text) ->
+                    criteria["sin cortes"] = min(criteria["sin cortes"] ?: 1f, value)
+                    problems += Problem(value, 1.05f, text)
+                }
+                if (input.scene == SceneType.RETRATO && input.faces.size <= 1 && armsAgainstBody(pose)) {
+                    problems += Problem(0.75f, 0.45f, "Pide que separe un poco los brazos del cuerpo: la figura queda más estilizada")
+                }
+            }
             // Sujeto demasiado pequeño.
             if (input.subjectKind == SubjectKind.CARA && box.area < 0.006f) {
                 problems += Problem(0.5f, 0.7f, "Acércate: la cara ocupa muy poco en la foto")
@@ -293,6 +310,9 @@ object CompositionEngine {
             }
         }
 
+        // 10) Estética aprendida (NIMA): apoya a las reglas, sin consejo propio.
+        input.aesthetic?.let { criteria["estética"] = ((it - 3.3f) / 1.2f).coerceIn(0f, 1f) }
+
         val score = weightedScore(criteria, input.scene, box != null)
         val worst = problems.minByOrNull { it.value / it.weight }
         val message = if (score >= Guidance.GOOD_SCORE && (worst == null || worst.value > 0.6f)) null else worst?.text
@@ -405,10 +425,19 @@ object CompositionEngine {
     )
 
     /** Dónde debería estar el sujeto según la guía y el tipo de foto. */
-    private fun subjectTarget(box: NRect, input: CompositionInput, style: GuideStyle, portrait: Boolean): Placement {
+    private fun subjectTarget(
+        box: NRect,
+        input: CompositionInput,
+        style: GuideStyle,
+        portrait: Boolean,
+        eyesY: Float?,
+    ): Placement {
         val cx = box.centerX
         val cy = box.centerY
         val kind = input.subjectKind
+        // Con los ojos medidos (pose), se colocan exactamente en la línea; si no, se estiman con la caja.
+        fun eyesAt(line: Float): Float =
+            if (eyesY != null) (line + (cy - eyesY)).coerceIn(0.15f, 0.85f) else targetEyesY(line, box, kind)
         val people = kind == SubjectKind.CARA || kind == SubjectKind.PERSONA
         val gaze = input.gazeX?.takeIf { people }
         // Espacio hacia donde mira: si mira a la derecha, el sujeto va a la izquierda.
@@ -419,11 +448,11 @@ object CompositionEngine {
         }
         var spiral: List<Pair<Float, Float>>? = null
         val target: Pair<Float, Float> = when (style) {
-            GuideStyle.CENTRO -> 0.5f to (if (people) targetEyesY(THIRD, box, kind) else 0.5f)
-            GuideStyle.SIMETRIA -> 0.5f to (if (people) targetEyesY(THIRD, box, kind) else cy)
+            GuideStyle.CENTRO -> 0.5f to (if (people) eyesAt(THIRD) else 0.5f)
+            GuideStyle.SIMETRIA -> 0.5f to (if (people) eyesAt(THIRD) else cy)
             GuideStyle.AUREA -> {
                 val x = if (onLeft) GoldenRatio.MINOR else GoldenRatio.MAJOR
-                val y = if (people) targetEyesY(GoldenRatio.MINOR, box, kind)
+                val y = if (people) eyesAt(GoldenRatio.MINOR)
                 else if (cy < 0.5f) GoldenRatio.MINOR else GoldenRatio.MAJOR
                 x to y
             }
@@ -432,11 +461,11 @@ object CompositionEngine {
                 val eyeBottom = !people && cy >= 0.5f
                 val (ex, ey) = GoldenRatio.eye(eyeRight = !onLeft, eyeBottom = eyeBottom)
                 spiral = GoldenRatio.spiral(portrait, eyeRight = !onLeft, eyeBottom = eyeBottom)
-                ex to (if (people) targetEyesY(ey, box, kind) else ey)
+                ex to (if (people) eyesAt(ey) else ey)
             }
             GuideStyle.TERCIOS, GuideStyle.LINEAS -> {
                 val x = if (onLeft) THIRD else 2 * THIRD
-                x to (if (people) targetEyesY(THIRD, box, kind) else nearestThird(cy))
+                x to (if (people) eyesAt(THIRD) else nearestThird(cy))
             }
         }
         val reason = when {
@@ -458,6 +487,72 @@ object CompositionEngine {
     }.coerceIn(0.2f, 0.7f)
 
     private fun nearestThird(v: Float): Float = if (v < 0.5f) THIRD else 2 * THIRD
+
+    // ---------------------------------------------------------------- cuerpo (pose)
+
+    /** Altura de los ojos (vista del usuario) si se ven y son de la persona del sujeto. */
+    private fun eyesY(p: BodyPose, box: NRect): Float? {
+        if (!p.visible(BodyPose.LEFT_EYE) || !p.visible(BodyPose.RIGHT_EYE)) return null
+        val x = (p.xs[BodyPose.LEFT_EYE] + p.xs[BodyPose.RIGHT_EYE]) / 2f
+        val y = (p.ys[BodyPose.LEFT_EYE] + p.ys[BodyPose.RIGHT_EYE]) / 2f
+        val m = 0.05f
+        return if (x in box.left - m..box.right + m && y in box.top - m..box.bottom + m) y else null
+    }
+
+    /**
+     * El borde de la foto pasa justo por una articulación (rodillas, tobillos, codos o muñecas): es uno
+     * de los cortes que más afean un retrato. Devuelve (valor 0–1, consejo).
+     */
+    private fun jointCut(p: BodyPose): Pair<Float, String>? {
+        val hips = p.visible(BodyPose.LEFT_HIP) || p.visible(BodyPose.RIGHT_HIP)
+        if (hips) {
+            for (k in intArrayOf(BodyPose.LEFT_KNEE, BodyPose.RIGHT_KNEE)) {
+                if (abs(p.ys[k] - 1f) <= 0.04f) return 0.35f to "No cortes por las rodillas: aléjate un poco o encuadra a medio muslo"
+            }
+        }
+        for ((ankle, foot) in listOf(BodyPose.LEFT_ANKLE to BodyPose.LEFT_FOOT, BodyPose.RIGHT_ANKLE to BodyPose.RIGHT_FOOT)) {
+            if (p.visible(ankle) && p.ys[ankle] < 0.98f && p.ys[foot] > 0.99f) {
+                return 0.5f to "No cortes los pies: deja un poco de espacio abajo"
+            }
+        }
+        val knees = p.visible(BodyPose.LEFT_KNEE, 0.4f) || p.visible(BodyPose.RIGHT_KNEE, 0.4f)
+        if (knees) {
+            for (a in intArrayOf(BodyPose.LEFT_ANKLE, BodyPose.RIGHT_ANKLE)) {
+                if (abs(p.ys[a] - 1f) <= 0.03f) return 0.4f to "No cortes por los tobillos: incluye los pies o encuadra por encima de las rodillas"
+            }
+        }
+        if (p.visible(BodyPose.LEFT_SHOULDER) || p.visible(BodyPose.RIGHT_SHOULDER)) {
+            for (j in intArrayOf(BodyPose.LEFT_ELBOW, BodyPose.RIGHT_ELBOW, BodyPose.LEFT_WRIST, BodyPose.RIGHT_WRIST)) {
+                val x = p.xs[j]
+                val atSide = abs(x) <= 0.03f || abs(x - 1f) <= 0.03f
+                if (atSide && p.ys[j] in 0f..1f) {
+                    val what = if (j == BodyPose.LEFT_ELBOW || j == BodyPose.RIGHT_ELBOW) "el codo" else "la mano"
+                    return 0.5f to "No cortes $what en el borde: incluye el brazo entero o déjalo fuera"
+                }
+            }
+        }
+        return null
+    }
+
+    /** Los dos brazos caen pegados al cuerpo (consejo clásico de pose: separarlos un poco). */
+    private fun armsAgainstBody(p: BodyPose): Boolean {
+        val needed = intArrayOf(
+            BodyPose.LEFT_SHOULDER, BodyPose.RIGHT_SHOULDER, BodyPose.LEFT_ELBOW, BodyPose.RIGHT_ELBOW,
+            BodyPose.LEFT_HIP, BodyPose.RIGHT_HIP,
+        )
+        if (needed.any { !p.visible(it, 0.6f) }) return false
+        val shoulders = abs(p.xs[BodyPose.LEFT_SHOULDER] - p.xs[BodyPose.RIGHT_SHOULDER])
+        if (shoulders < 0.05f) return false // de perfil
+        val torso = intArrayOf(BodyPose.LEFT_SHOULDER, BodyPose.RIGHT_SHOULDER, BodyPose.LEFT_HIP, BodyPose.RIGHT_HIP)
+        val left = torso.minOf { p.xs[it] }
+        val right = torso.maxOf { p.xs[it] }
+        val shoulderY = min(p.ys[BodyPose.LEFT_SHOULDER], p.ys[BodyPose.RIGHT_SHOULDER])
+        return intArrayOf(BodyPose.LEFT_ELBOW, BodyPose.RIGHT_ELBOW).all { e ->
+            val x = p.xs[e]
+            val armDown = p.ys[e] > shoulderY + 0.3f * shoulders
+            armDown && x > left - 0.1f * shoulders && x < right + 0.1f * shoulders
+        }
+    }
 
     private fun grid(a: Float, b: Float): List<GuideShape> = listOf(
         GuideShape(ShapeKind.GRID, listOf(a to 0f, a to 1f)),
@@ -561,15 +656,16 @@ object CompositionEngine {
             scene == SceneType.RETRATO || scene == SceneType.SELFIE || scene == SceneType.GRUPO -> mapOf(
                 "posición" to 0.25f, "aire" to 0.15f, "sin cortes" to 0.15f, "nivel" to 0.1f,
                 "bordes limpios" to 0.15f, "exposición" to 0.1f, "nitidez" to 0.1f,
-                "equilibrio" to 0.05f, "simetría" to 0.2f, "líneas" to 0.1f,
+                "equilibrio" to 0.05f, "simetría" to 0.2f, "líneas" to 0.1f, "estética" to 0.08f,
             )
             !hasSubject -> mapOf(
                 "horizonte" to 0.25f, "nivel" to 0.2f, "bordes limpios" to 0.2f, "exposición" to 0.2f, "nitidez" to 0.15f,
-                "equilibrio" to 0.1f, "simetría" to 0.3f, "líneas" to 0.25f,
+                "equilibrio" to 0.1f, "simetría" to 0.3f, "líneas" to 0.25f, "estética" to 0.08f,
             )
             else -> mapOf(
                 "posición" to 0.3f, "sin cortes" to 0.15f, "nivel" to 0.15f, "bordes limpios" to 0.15f,
                 "exposición" to 0.15f, "nitidez" to 0.1f, "equilibrio" to 0.1f, "simetría" to 0.25f, "líneas" to 0.15f,
+                "estética" to 0.08f,
             )
         }
         var sum = 0f

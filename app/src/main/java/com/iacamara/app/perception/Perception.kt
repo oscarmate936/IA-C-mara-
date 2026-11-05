@@ -122,6 +122,46 @@ data class CaptureMeta(
         }
 }
 
+/**
+ * Puntos del cuerpo de la persona principal (MediaPipe Pose: 33 puntos) en coordenadas P.
+ * Los puntos fuera del encuadre también tienen posición (estimada) pero poca visibilidad.
+ */
+class BodyPose(val xs: FloatArray, val ys: FloatArray, val visibility: FloatArray) {
+    fun visible(i: Int, min: Float = 0.5f): Boolean = visibility[i] >= min
+
+    fun map(f: (Float, Float) -> Pair<Float, Float>): BodyPose {
+        val nx = FloatArray(xs.size)
+        val ny = FloatArray(ys.size)
+        for (i in xs.indices) {
+            val (x, y) = f(xs[i], ys[i])
+            nx[i] = x
+            ny[i] = y
+        }
+        return BodyPose(nx, ny, visibility)
+    }
+
+    companion object {
+        const val COUNT = 33
+        const val NOSE = 0
+        const val LEFT_EYE = 2
+        const val RIGHT_EYE = 5
+        const val LEFT_SHOULDER = 11
+        const val RIGHT_SHOULDER = 12
+        const val LEFT_ELBOW = 13
+        const val RIGHT_ELBOW = 14
+        const val LEFT_WRIST = 15
+        const val RIGHT_WRIST = 16
+        const val LEFT_HIP = 23
+        const val RIGHT_HIP = 24
+        const val LEFT_KNEE = 25
+        const val RIGHT_KNEE = 26
+        const val LEFT_ANKLE = 27
+        const val RIGHT_ANKLE = 28
+        const val LEFT_FOOT = 31
+        const val RIGHT_FOOT = 32
+    }
+}
+
 data class Perception(
     val scene: SceneType,
     val conditions: Set<Condition>,
@@ -142,4 +182,10 @@ data class Perception(
     val timings: Map<String, Int> = emptyMap(),
     /** Líneas guía, punto de fuga, simetría y reflejos de la escena. */
     val structure: SceneStructure? = null,
+    /** Puntos del cuerpo de la persona principal (coordenadas P). */
+    val pose: BodyPose? = null,
+    /** Probabilidad de cada tipo de escena según CLIP (suma 1). */
+    val sceneScores: Map<SceneType, Float> = emptyMap(),
+    /** Nota de estética 1–10 (NIMA, aprendida de fotos puntuadas por personas). */
+    val aesthetic: Float? = null,
 )
