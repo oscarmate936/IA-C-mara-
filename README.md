@@ -10,7 +10,7 @@ Pensada para **Samsung Galaxy S22+** y **Honor Magic 8 Lite**.
 - **Aprende contigo:** se adapta a tu estilo y mejora con paquetes de actualización.
 
 Solo incluye funciones para tomar mejores fotos o mejorar su calidad.
-Todo el análisis de imagen funciona en el móvil, gratis y sin conexión.
+Funciona 100 % dentro del móvil: sin internet, sin APIs, sin claves, sin cuentas y gratis.
 
 📄 **Plan de creación completo:** [docs/PLAN.md](docs/PLAN.md)
 
