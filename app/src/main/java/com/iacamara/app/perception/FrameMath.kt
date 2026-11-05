@@ -13,6 +13,14 @@ object FrameMath {
         return if (front) normalize(360 - d) else d
     }
 
+    /** Gira un punto normalizado `rotation` grados en sentido horario (como Matrix.postRotate). */
+    fun rotate(x: Float, y: Float, rotation: Int): Pair<Float, Float> = when (normalize(rotation)) {
+        90 -> 1f - y to x
+        180 -> 1f - x to 1f - y
+        270 -> y to 1f - x
+        else -> x to y
+    }
+
     /** Punto (u, v) del fotograma girado `rotation` grados → punto del encuadre vertical. */
     fun unrotate(u: Float, v: Float, rotation: Int): Pair<Float, Float> = when (normalize(rotation)) {
         90 -> v to 1f - u

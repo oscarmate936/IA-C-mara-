@@ -11,6 +11,7 @@ coroutines = "1.10.2"
 # Versión comprobada en la compilación de la Fase 2 (5 nov 2026).
 mediapipe = "0.10.35"
 junit = "4.13.2"
+onnxruntime = "1.31.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -31,6 +32,7 @@ androidx-camera-extensions = { group = "androidx.camera", name = "camera-extensi
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 mediapipe-tasks-vision = { group = "com.google.mediapipe", name = "tasks-vision", version.ref = "mediapipe" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

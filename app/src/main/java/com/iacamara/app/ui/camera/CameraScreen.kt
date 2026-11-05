@@ -84,6 +84,13 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
 import android.os.SystemClock
+import androidx.compose.material.icons.filled.CameraEnhance
+import androidx.compose.runtime.mutableFloatStateOf
+import com.iacamara.app.composition.CompositionEngine
+import com.iacamara.app.composition.CompositionInput
+import com.iacamara.app.composition.Guidance
+import com.iacamara.app.director.Tip
+import com.iacamara.app.perception.Condition
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.runtime.SideEffect
@@ -125,6 +132,10 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
     val director = remember { DirectorSession() }
     val auto = remember { AutoFocusState() }
     var direction by remember { mutableStateOf<Direction?>(null) }
+    var guidance by remember { mutableStateOf<Guidance?>(null) }
+    var smartShutter by remember { mutableStateOf(prefs.smartShutter) }
+    var autoProgress by remember { mutableFloatStateOf(0f) }
+    val smart = remember { SmartShutterState() }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
 
     val previewView = remember {
@@ -238,6 +249,9 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
             if (s.bindGeneration != auto.generation) auto.reset(s.bindGeneration)
             if (p == null || !iaEnabled || !s.analysisActive) {
                 direction = null
+                guidance = null
+                autoProgress = 0f
+                smart.reset()
                 return@collect
             }
             val d = director.update(
@@ -254,8 +268,53 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 ),
             )
             direction = d
+
+            // Coach de composición (Fase 3).
+            val front = s.lens == Lens.FRONT
+            val level = levelState.value
+            val mainFace = p.subject?.let { subject -> p.faceDetails.maxByOrNull { it.box.iou(subject.box) } }
+                ?: p.faceDetails.firstOrNull()
+            val g = CompositionEngine.evaluate(
+                CompositionInput(
+                    scene = p.scene,
+                    subjectKind = p.subject?.kind,
+                    subjectBox = p.subject?.box,
+                    faces = p.faces,
+                    // La mirada se mide sin espejo; el usuario ve la frontal en espejo.
+                    gazeX = mainFace?.gazeX?.let { if (front) -it else it },
+                    saliency = p.saliency,
+                    rollDegrees = level?.takeIf { !it.isFlat }?.deviationDegrees,
+                    horizonY = p.light?.horizonY,
+                    interestingSky = (p.light?.skyBlue ?: 0f) >= 0.25f || (p.light?.warmTop ?: 0f) >= 0.2f,
+                    highlightClip = p.light?.highlightClip ?: 0f,
+                    shadowClip = p.light?.shadowClip ?: 0f,
+                    blurRisk = Condition.TEMBLOR in p.conditions,
+                    front = front,
+                    deviceDegrees = deviceDegrees,
+                    namedObjects = p.namedObjects,
+                ),
+            )
+            guidance = g
+
             if (!s.ready) return@collect
             val now = SystemClock.elapsedRealtime()
+
+            // Disparo inteligente: encuadre bueno, móvil quieto y todos con los ojos abiertos.
+            if (smartShutter && !s.capturing) {
+                val eyesOk = p.faces.isEmpty() ||
+                    (p.faceDetails.size >= p.faces.size && p.faceDetails.all { it.eyesOpen })
+                val ready = g.isGood && eyesOk &&
+                    Condition.TEMBLOR !in p.conditions && Condition.MOVIMIENTO !in p.conditions
+                autoProgress = smart.update(ready, now)
+                if (autoProgress >= 1f) {
+                    smart.fired(now)
+                    autoProgress = 0f
+                    shoot()
+                }
+            } else if (!smartShutter) {
+                autoProgress = 0f
+                smart.reset()
+            }
             if (now - auto.lastManualFocusMs > MANUAL_FOCUS_HOLD_MS && viewSize.width > 0) {
                 val target = d.focusTarget
                 if (target != null) {
@@ -287,6 +346,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
             engine.setExposureEv(0f)
             auto.reset(auto.generation)
             direction = null
+            guidance = null
         }
     }
 
@@ -366,6 +426,17 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 },
             )
             RotatingIconButton(
+                icon = Icons.Filled.CameraEnhance,
+                description = "Disparo inteligente",
+                rotation = iconRotation,
+                active = smartShutter,
+                enabled = iaEnabled,
+                onClick = {
+                    smartShutter = !smartShutter
+                    prefs.smartShutter = smartShutter
+                },
+            )
+            RotatingIconButton(
                 icon = Icons.Outlined.Info,
                 description = "Diagnóstico de cámara",
                 rotation = iconRotation,
@@ -407,6 +478,15 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
             val currentPerception = perception
             if (iaEnabled && state.analysisActive && currentPerception != null) {
                 SubjectOverlay(currentPerception, front = state.lens == Lens.FRONT)
+                guidance?.let { g ->
+                    CompositionOverlay(g, front = state.lens == Lens.FRONT)
+                    ScoreBadge(
+                        score = g.score,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(10.dp),
+                    )
+                }
                 SceneBadge(
                     perception = currentPerception,
                     reason = direction?.reason,
@@ -414,7 +494,13 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                         .align(Alignment.TopCenter)
                         .padding(top = 40.dp),
                 )
-                direction?.tip?.let { tip ->
+                // Prioridad: consejo con acción > corrección del encuadre > "buen encuadre" > consejo de escena.
+                val g = guidance
+                val tipToShow = direction?.tip?.takeIf { it.action != null }
+                    ?: g?.message?.let { Tip(it) }
+                    ?: (if (g?.isGood == true) Tip("Buen encuadre: ¡dispara!") else null)
+                    ?: direction?.tip
+                tipToShow?.let { tip ->
                     TipChip(
                         tip = tip,
                         onAction = {
@@ -435,9 +521,10 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                     HistogramPanel(
                         light = light,
                         frameMs = currentPerception.frameMs,
+                        timings = currentPerception.timings,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(10.dp),
+                            .padding(top = 66.dp, end = 10.dp),
                     )
                 }
             }
@@ -476,6 +563,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
             ) {
                 state.captureMegapixels?.let { mp -> InfoChip(String.format(Locale.US, "%.0f MP", mp)) }
                 if (state.mode != PhotoMode.FOTO) InfoChip(state.mode.label)
+                if (smartShutter && iaEnabled) InfoChip("AUTO-DISPARO")
             }
 
             if (state.capturing && state.mode != PhotoMode.FOTO) {
@@ -545,7 +633,13 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                     rotation = iconRotation,
                     onClick = { state.lastPhotoUri?.let { openPhoto(context, it) } },
                 )
-                ShutterButton(capturing = state.capturing, enabled = state.ready, onClick = shoot)
+                ShutterButton(
+                    capturing = state.capturing,
+                    enabled = state.ready,
+                    onClick = shoot,
+                    smartShutter = smartShutter && iaEnabled,
+                    autoProgress = autoProgress,
+                )
                 Box(modifier = Modifier.size(54.dp), contentAlignment = Alignment.Center) {
                     RotatingIconButton(
                         icon = Icons.Filled.Cameraswitch,
@@ -631,5 +725,35 @@ private class AutoFocusState {
             return true
         }
         return false
+    }
+}
+
+/** Disparo inteligente: dispara cuando todo está bien durante un momento, con pausa entre fotos. */
+private class SmartShutterState {
+    private var holdStartMs = 0L
+    private var lastShotMs = 0L
+
+    /** Progreso 0–1 de la espera; 1 = disparar ya. */
+    fun update(ready: Boolean, now: Long): Float {
+        if (!ready || now - lastShotMs < COOLDOWN_MS) {
+            holdStartMs = 0L
+            return 0f
+        }
+        if (holdStartMs == 0L) holdStartMs = now
+        return ((now - holdStartMs) / HOLD_MS.toFloat()).coerceAtMost(1f)
+    }
+
+    fun fired(now: Long) {
+        lastShotMs = now
+        holdStartMs = 0L
+    }
+
+    fun reset() {
+        holdStartMs = 0L
+    }
+
+    private companion object {
+        const val HOLD_MS = 700L
+        const val COOLDOWN_MS = 3000L
     }
 }

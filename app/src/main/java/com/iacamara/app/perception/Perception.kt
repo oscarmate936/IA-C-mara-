@@ -61,7 +61,15 @@ enum class Condition(val label: String) {
     LUCES_QUEMADAS("Luces quemadas"),
 }
 
-enum class SubjectKind { CARA, PERSONA, ANIMAL, COMIDA, OBJETO }
+enum class SubjectKind { CARA, PERSONA, ANIMAL, COMIDA, OBJETO, SALIENTE }
+
+/** Detalle de una cara obtenido con Face Landmarker. */
+data class FaceDetail(
+    val box: NRect,
+    val eyesOpen: Boolean,
+    /** Hacia dónde mira, en la imagen sin espejo: −1 izquierda … +1 derecha. */
+    val gazeX: Float,
+)
 
 data class Subject(val kind: SubjectKind, val label: String, val box: NRect, val score: Float)
 
@@ -84,7 +92,17 @@ class LightInfo(
     /** Fracción de la imagen muy clara y sin color (nieve, arena clara, nubes). */
     val brightNeutral: Float,
     val saturation: Float,
+    /** Altura del horizonte (0 arriba … 1 abajo, imagen derecha) si hay un cambio claro cielo/tierra. */
+    val horizonY: Float? = null,
 )
+
+/**
+ * Mapa de "lo que llama la atención" (saliencia, U²-Net) en una rejilla pequeña,
+ * en coordenadas del encuadre vertical de la pantalla (P). Valores 0–1.
+ */
+class SaliencyMap(val width: Int, val height: Int, private val values: FloatArray) {
+    fun value(i: Int, j: Int): Float = values[j * width + i]
+}
 
 /** Ajustes reales del sensor que la cámara está usando en el visor. */
 data class CaptureMeta(
@@ -115,4 +133,11 @@ data class Perception(
     val labels: List<String>,
     val frameMs: Long,
     val timestampMs: Long,
+    val saliency: SaliencyMap? = null,
+    /** Datos de cada cara (ojos, mirada) obtenidos con Face Landmarker. */
+    val faceDetails: List<FaceDetail> = emptyList(),
+    /** Objetos con nombre en español del detector de vocabulario abierto (YOLOE). */
+    val namedObjects: List<DetectedObject> = emptyList(),
+    /** Milisegundos medios de cada modelo en este móvil (para ver el rendimiento). */
+    val timings: Map<String, Int> = emptyMap(),
 )

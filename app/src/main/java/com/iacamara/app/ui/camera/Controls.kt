@@ -139,21 +139,47 @@ fun ModeSelector(modes: List<PhotoMode>, selected: PhotoMode, onSelect: (PhotoMo
     }
 }
 
+/**
+ * Botón de disparo. `autoProgress` (0–1) dibuja un anillo ámbar mientras el disparo inteligente
+ * espera a que el encuadre se mantenga bien; `smartShutter` lo marca como activo.
+ */
 @Composable
-fun ShutterButton(capturing: Boolean, enabled: Boolean, onClick: () -> Unit) {
+fun ShutterButton(
+    capturing: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    smartShutter: Boolean = false,
+    autoProgress: Float = 0f,
+) {
     val scale by animateFloatAsState(if (capturing) 0.88f else 1f, label = "shutterScale")
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(80.dp)
-            .scale(scale)
-            .border(4.dp, Color.White, CircleShape)
-            .padding(8.dp)
-            .clip(CircleShape)
-            .background(if (enabled) Color.White else Color.White.copy(alpha = 0.4f))
-            .clickable(enabled = enabled && !capturing, onClick = onClick),
-    ) {
-        if (capturing) CircularProgressIndicator(color = Amber, strokeWidth = 3.dp, modifier = Modifier.size(36.dp))
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(88.dp)) {
+        if (smartShutter) {
+            androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                val stroke = 4.dp.toPx()
+                drawArc(
+                    color = Amber,
+                    startAngle = -90f,
+                    sweepAngle = 360f * autoProgress.coerceIn(0f, 1f),
+                    useCenter = false,
+                    topLeft = androidx.compose.ui.geometry.Offset(stroke / 2, stroke / 2),
+                    size = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(stroke),
+                )
+            }
+        }
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(76.dp)
+                .scale(scale)
+                .border(4.dp, if (smartShutter) Amber else Color.White, CircleShape)
+                .padding(8.dp)
+                .clip(CircleShape)
+                .background(if (enabled) Color.White else Color.White.copy(alpha = 0.4f))
+                .clickable(enabled = enabled && !capturing, onClick = onClick),
+        ) {
+            if (capturing) CircularProgressIndicator(color = Amber, strokeWidth = 3.dp, modifier = Modifier.size(36.dp))
+        }
     }
 }
 

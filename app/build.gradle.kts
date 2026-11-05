@@ -19,7 +19,7 @@ android {
         minSdk = 34
         targetSdk = 36
         versionCode = buildNumber
-        versionName = "0.2.$buildNumber"
+        versionName = "0.3.$buildNumber"
         ndk {
             // Solo procesadores de 64 bits (S22+ y Magic 8 Lite): APK más pequeño.
             abiFilters += listOf("arm64-v8a")
@@ -71,6 +71,10 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            // MediaPipe y ONNX Runtime podrían traer la misma librería de C++.
+            pickFirsts += "**/libc++_shared.so"
+        }
     }
 
     testOptions {
@@ -79,7 +83,7 @@ android {
 
     androidResources {
         // Los modelos de IA se leen directamente del APK: no deben ir comprimidos.
-        noCompress += "tflite"
+        noCompress += listOf("tflite", "task", "onnx")
     }
 
     lint {
@@ -116,6 +120,7 @@ dependencies {
 
     // IA en el móvil (modelos dentro del APK, sin internet).
     implementation(libs.mediapipe.tasks.vision)
+    implementation(libs.onnxruntime.android)
 
     testImplementation(libs.junit)
 }

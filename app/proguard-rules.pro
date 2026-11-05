@@ -18,3 +18,7 @@
 # la carga de los modelos falla con ExceptionInInitializerError ("IA no disponible: null").
 -keep class com.google.common.flogger.** { *; }
 -dontwarn com.google.common.flogger.**
+
+# ONNX Runtime (YOLO11, YOLOE, U²-Net): el código nativo crea objetos Java por su nombre.
+-keep class ai.onnxruntime.** { *; }
+-dontwarn ai.onnxruntime.**

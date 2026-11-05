@@ -67,8 +67,18 @@ jobs:
             echo "::error::R8 ha eliminado Flogger: MediaPipe no podrá cargar los modelos."
             exit 1
           fi
-          for m in blaze_face_short_range efficientdet_lite2 efficientnet_lite0; do
-            unzip -v out/IA-Camara.apk "assets/models/$m.tflite" | grep -q " Stored " || { echo "::error::El modelo $m falta o está comprimido"; exit 1; }
+          if unzip -p out/IA-Camara.apk 'classes*.dex' | grep -a -q "Lai/onnxruntime/OrtSession;"; then
+            echo "ONNX Runtime presente."
+          else
+            echo "::error::R8 ha renombrado ONNX Runtime: YOLO y U²-Net no podrán cargarse."
+            exit 1
+          fi
+          for m in blaze_face_short_range.tflite efficientnet_lite0.tflite face_landmarker.task \
+                   yolo11n.onnx yoloe_vocab.onnx u2netp.onnx; do
+            unzip -v out/IA-Camara.apk "assets/models/$m" | grep -q " Stored " || { echo "::error::El modelo $m falta o está comprimido"; exit 1; }
+          done
+          for f in yolo11n_labels.txt yoloe_labels.tsv; do
+            unzip -l out/IA-Camara.apk "assets/models/$f" | grep -q "$f" || { echo "::error::Falta $f"; exit 1; }
           done
           echo "Modelos presentes y sin comprimir."
 
@@ -77,7 +87,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v0.2.${{ github.run_number }}"
+          TAG="v0.3.${{ github.run_number }}"
           if [ "$FIRMA" = "fija" ]; then
             UPDATE_NOTE="Se instala encima de la versión anterior sin perder nada."
           else
@@ -98,6 +108,6 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: IA-Camara-v0.2.${{ github.run_number }}
+          name: IA-Camara-v0.3.${{ github.run_number }}
           path: out/IA-Camara.apk
           retention-days: 30

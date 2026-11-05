@@ -23,10 +23,16 @@ class AppPrefs(context: Context) {
         get() = sp.getBoolean(KEY_HISTOGRAM, false)
         set(value) = sp.edit().putBoolean(KEY_HISTOGRAM, value).apply()
 
+    /** Disparo inteligente: la app dispara sola cuando el encuadre es bueno y todos tienen los ojos abiertos. */
+    var smartShutter: Boolean
+        get() = sp.getBoolean(KEY_SMART_SHUTTER, false)
+        set(value) = sp.edit().putBoolean(KEY_SMART_SHUTTER, value).apply()
+
     private companion object {
         const val KEY_GRID = "rejilla"
         const val KEY_LEVEL = "nivel"
         const val KEY_IA = "ia"
         const val KEY_HISTOGRAM = "histograma"
+        const val KEY_SMART_SHUTTER = "disparo_inteligente"
     }
 }

@@ -37,11 +37,14 @@ class LightAnalyzer {
         var warm = 0
         var neutral = 0
         var saturationSum = 0L
+        val rowMeans = FloatArray((h + STEP - 1) / STEP)
 
         var y = 0
         while (y < h) {
             val row = y * w
             val inSubjectRow = y in sy0..sy1
+            var rowSum = 0L
+            var rowCount = 0
             var x = 0
             while (x < w) {
                 val c = buffer[row + x]
@@ -70,8 +73,11 @@ class LightAnalyzer {
                     if (r > g + 20 && g > b + 5 && luma > 60) warm++
                 }
                 if (luma > 170 && mx - mn < 28) neutral++
+                rowSum += luma
+                rowCount++
                 x += STEP
             }
+            rowMeans[y / STEP] = if (rowCount > 0) rowSum / rowCount.toFloat() else 0f
             y += STEP
         }
 
@@ -89,11 +95,41 @@ class LightAnalyzer {
             warmTop = warm / topCount.coerceAtLeast(1).toFloat(),
             brightNeutral = neutral / n,
             saturation = saturationSum / n / 255f,
+            horizonY = findHorizon(rowMeans),
         )
     }
 
-    private companion object {
-        const val BINS = 32
-        const val STEP = 2
+    companion object {
+        private const val BINS = 32
+        private const val STEP = 2
+
+        /**
+         * Busca la fila donde la imagen pasa de un cielo claro a una tierra más oscura (el horizonte).
+         * Devuelve su altura (0 arriba … 1 abajo) o null si no hay un cambio claro.
+         */
+        fun findHorizon(rowMeans: FloatArray): Float? {
+            val n = rowMeans.size
+            if (n < 20) return null
+            val band = (n * 0.06f).toInt().coerceAtLeast(3)
+            var bestRow = -1
+            var bestDrop = 0f
+            for (r in (n * 0.15f).toInt()..(n * 0.85f).toInt()) {
+                if (r - band < 0 || r + band > n) continue
+                var above = 0f
+                var below = 0f
+                for (k in 1..band) {
+                    above += rowMeans[r - k]
+                    below += rowMeans[r + k - 1]
+                }
+                above /= band
+                below /= band
+                val drop = above - below
+                if (drop > bestDrop && above >= 100f) {
+                    bestDrop = drop
+                    bestRow = r
+                }
+            }
+            return if (bestRow >= 0 && bestDrop >= 25f) bestRow / n.toFloat() else null
+        }
     }
 }

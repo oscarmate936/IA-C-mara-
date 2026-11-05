@@ -150,10 +150,37 @@ fun TipChip(tip: Tip, onAction: () -> Unit, modifier: Modifier = Modifier) {
 
 /** Histograma de luminancia: muestra si hay sombras empastadas o luces quemadas. */
 @Composable
-fun HistogramPanel(light: LightInfo, frameMs: Long, modifier: Modifier = Modifier) {
+fun HistogramPanel(
+    light: LightInfo,
+    frameMs: Long,
+    modifier: Modifier = Modifier,
+    timings: Map<String, Int> = emptyMap(),
+) {
     val textMeasurer = rememberTextMeasurer()
+    Column(horizontalAlignment = Alignment.End, modifier = modifier) {
+        HistogramBars(light, frameMs, textMeasurer)
+        val models = timings.filterValues { it > 0 }.entries.joinToString("\n") { "${it.key} ${it.value} ms" }
+        if (models.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = models,
+                color = Color.White.copy(alpha = 0.8f),
+                fontSize = 9.sp,
+                lineHeight = 11.sp,
+                textAlign = TextAlign.End,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun HistogramBars(light: LightInfo, frameMs: Long, textMeasurer: androidx.compose.ui.text.TextMeasurer) {
     Canvas(
-        modifier
+        Modifier
             .size(width = 120.dp, height = 58.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(Color.Black.copy(alpha = 0.5f)),
