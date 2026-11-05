@@ -593,7 +593,6 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                     Modifier.align(Alignment.Center),
                 )
             }
-            }
 
             state.message?.let { message ->
                 Text(
