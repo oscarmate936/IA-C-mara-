@@ -14,13 +14,8 @@ class AppPrefs(context: Context) {
         get() = sp.getBoolean(KEY_LEVEL, true)
         set(value) = sp.edit().putBoolean(KEY_LEVEL, value).apply()
 
-    var highRes: Boolean
-        get() = sp.getBoolean(KEY_HIGH_RES, false)
-        set(value) = sp.edit().putBoolean(KEY_HIGH_RES, value).apply()
-
     private companion object {
         const val KEY_GRID = "rejilla"
         const val KEY_LEVEL = "nivel"
-        const val KEY_HIGH_RES = "alta_resolucion"
     }
 }

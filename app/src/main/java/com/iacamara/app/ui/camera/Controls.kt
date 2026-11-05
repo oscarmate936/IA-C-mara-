@@ -68,23 +68,6 @@ fun RotatingIconButton(
     }
 }
 
-@Composable
-fun TextToggle(label: String, active: Boolean, rotation: Float, onClick: () -> Unit) {
-    Text(
-        text = label,
-        color = if (active) Color.Black else Color.White,
-        fontSize = 12.sp,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier
-            .rotate(rotation)
-            .clip(RoundedCornerShape(6.dp))
-            .background(if (active) Amber else Color.Transparent)
-            .border(1.dp, if (active) Amber else Color.White.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-    )
-}
-
 /** Atajos de zoom (0.6x, 1x, 2x, 3x…) según lo que permita cada cámara. */
 @Composable
 fun ZoomBar(zoom: Float, minZoom: Float, maxZoom: Float, rotation: Float, onSelect: (Float) -> Unit, modifier: Modifier = Modifier) {

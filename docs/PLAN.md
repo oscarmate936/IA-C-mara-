@@ -87,31 +87,39 @@ lecciones o retos, vídeo, reloj inteligente, versión iPhone, servicios en la n
 
 ## 2. Tus móviles: qué permite cada uno
 
-| | **Samsung Galaxy S22+** | **Honor Magic 8 Lite** |
+Datos **medidos** con la pantalla de diagnóstico de la app (v0.1.1). Detalle completo en
+[DISPOSITIVOS.md](DISPOSITIVOS.md).
+
+| | **Samsung Galaxy S22+** (SM-S906U) | **Honor Magic 8 Lite** (MTN-NX3) |
 |---|---|---|
-| Chip | Exynos 2200 o Snapdragon 8 Gen 1 (depende de la región; la app lo detecta) | Snapdragon 6 Gen 4 |
+| Chip | Snapdragon 8 Gen 1 (SM8450) | Snapdragon 6 Gen 4 (SM6650) |
 | RAM | 8 GB | 8 GB |
-| Cámaras traseras | 50 MP principal con OIS · 12 MP ultra gran angular · 10 MP teleobjetivo 3× con OIS | 108 MP principal (sensor grande 1/1,67") con OIS · 5 MP ultra gran angular |
-| Android | 14 o superior (One UI) | 15 (MagicOS 9) |
-| Extensiones del fabricante para apps de terceros | **Sí**: Auto, Bokeh, HDR, Noche y Retoque facial. Samsung las abre a otras apps y da acceso a los tres sensores mediante una cámara lógica (zoom) | **Por confirmar**: se comprobará en la Fase 1 |
-| RAW (DNG) | Sí, vía Camera2 (hay informes de un rango de datos algo menor que en el modo Pro de Samsung) | Por confirmar en la Fase 1 |
-| Aceleración de IA | GPU (Xclipse 920 o Adreno 730); NPU según variante | GPU Adreno + NPU Hexagon |
+| Android | 16 | 16 |
+| Lentes visibles para la app | Ultra gran angular 13 mm · principal 23 mm · tele 66 mm (≈3×), unidas en una cámara lógica con zoom 0,6×–10× · 2 modos frontales | Solo principal 24 mm (zoom digital 1×–8×) y frontal. **El ultra gran angular no es accesible** |
+| Resolución que entrega | 12,5 MP principal · 12,2 MP ultra gran angular · 10 MP tele · 10 MP frontal | 12 MP principal · 4 MP frontal |
+| 50 / 108 MP completos | **No** (reservados a la app de Samsung) | **No** (reservados a la app de Honor) |
+| Extensiones del fabricante | **Auto ✓ · Retrato (bokeh) ✓ · Retoque facial ✓** · HDR ✗ · Noche ✗ | Ninguna |
+| Control manual ISO / obturación | ✅ ISO 50–3200 · hasta 1/6 s (principal) | ✅ ISO 100–6400 · hasta 1/2 s |
+| RAW (DNG) | ✅ en todas las lentes | ✅ |
+| Ráfaga y reprocesado | ✅ | ✅ |
+| Estabilizador óptico | ✅ principal y tele | No lo declara a las apps |
+| Enfoque mínimo | 7 cm principal · 40 cm tele · ultra gran angular foco fijo | 9 cm |
+| Ultra HDR (JPEG_R) | No | No |
 | Nivel en la app (§14) | **A−** (gama alta de 2022) | **B** (gama media de 2025) |
 
-**Estrategia para cada móvil**
+**Estrategia para cada móvil (actualizada con los datos reales)**
 
-- **Galaxy S22+:** usar las **extensiones de Samsung** (Noche, HDR, Bokeh) como primera opción porque dan la
-  mejor calidad, con el pipeline propio como alternativa y para todo lo que no cubren. Para retratos, el Director
-  IA preferirá el **tele 3×** (sin distorsión de la cara y mejor desenfoque natural). RAW en el modo Pro.
-- **Honor Magic 8 Lite:** si Honor no expone extensiones, el **pipeline computacional propio** (HDR y noche
-  multiframe, §10) será el principal. El sensor de 108 MP es grande y con OIS, muy bueno para fotos nocturnas
-  multiframe. El ultra gran angular de 5 MP tiene poca calidad, así que la app solo lo usará cuando haga falta
-  y lo indicará.
-- **En ambos:** muchas marcas reservan la resolución completa (50/108 MP) para su propia app de cámara. La app
-  pedirá siempre la máxima resolución disponible y se medirá qué entrega cada móvil en la Fase 1. Si solo da
-  12 MP, se compensa con super-resolución multiframe (§10).
-- **Android mínimo: 14.** Ambos móviles lo cumplen, y así Ultra HDR y los shaders de GPU (AGSL)
-  funcionan sin código alternativo para versiones antiguas.
+- **En ambos, el modo Noche y el HDR serán los propios de la app** (ráfaga con exposición manual + alineado +
+  fusión, §10), porque ningún fabricante los comparte. Es una sola vía que se optimiza para los dos móviles.
+- **Galaxy S22+:** Retrato con el bokeh de Samsung (ya disponible) y, cuando sea mejor, el propio de la app.
+  El Director IA preferirá el **tele 3×** para retratos. El modo **AUTO** de Samsung se compara con el procesado
+  propio para elegir el mejor por escena. Cada fotograma de noche está limitado a 1/6 s, así que el modo Noche
+  apilará más fotos cortas.
+- **Honor Magic 8 Lite:** el pipeline propio es la única vía y la más importante. Sus 12 MP salen de agrupar
+  píxeles del sensor grande (1/1,67"): poco ruido, ideal para apilar fotos de noche (hasta 1/2 s cada una).
+  Sin ultra gran angular ni tele: para encuadres amplios el coach propondrá panorámica; para acercarse, la
+  super-resolución multiframe en vez del zoom digital simple.
+- **Android mínimo: 14.** Ambos móviles tienen Android 16.
 
 ---
 
@@ -246,7 +254,7 @@ Tamaño estimado del APK: **300–500 MB**.
 
 | Función | Tecnología | Notas |
 |---|---|---|
-| HDR / Noche / Bokeh del fabricante | **CameraX Extensions** | Disponibles en el S22+; se comprobará en el Honor. |
+| Auto / Bokeh del fabricante | **CameraX Extensions** | Solo en el S22+ (Auto, Bokeh, Retoque facial). Ningún móvil comparte HDR ni Noche. |
 | HDR propio | Horquillado de exposición + alineado (OpenCV) + **fusión Mertens** + mapeo de tonos | Cuando no hay extensión o cuando el pipeline propio da mejor resultado. |
 | Noche propia | Ráfaga de 6–15 frames + alineado robusto + promedio con rechazo de "fantasmas" + **Zero-DCE** | Menos ruido y sombras más limpias. |
 | Mejor fotograma | Nitidez (varianza Laplaciana) + ojos abiertos + NIMA | De cada ráfaga se elige el mejor automáticamente. |
@@ -328,7 +336,7 @@ Decide como lo haría un fotógrafo profesional, en dos niveles:
 | **Grupo** | Varias caras | Enfoque que cubra todas · ráfaga y elección del frame con todos los ojos abiertos | "Que todos estén a la misma distancia" · "Los más altos detrás" |
 | **Contraluz** | Histograma bimodal, sujeto oscuro y fondo quemado | HDR · medir en el sujeto · +EV · sugerir flash de relleno | "Gira un poco para que la luz le dé de lado" |
 | **Paisaje** | Escena de paisaje, sin caras, enfoque lejano | ISO mínimo · HDR si hay mucho rango dinámico · gran angular · nivel de horizonte | "Horizonte en el tercio inferior si el cielo es bonito" · "Busca algo interesante en primer plano" |
-| **Poca luz / noche** | ISO alto, poca luz | Extensión Noche (S22+) o multiframe propio (6–15 frames según el temblor) | "Apoya el móvil o mantenlo quieto 2 s" |
+| **Poca luz / noche** | ISO alto, poca luz | Noche multiframe propio (6–15 frames según el temblor; más fotos cortas en el S22+, limitado a 1/6 s por foto) | "Apoya el móvil o mantenlo quieto 2 s" |
 | **Comida** | Escena de comida | Plato plano → vista cenital (90°); vaso, hamburguesa o tarta → 45° · calidez y saturación sutiles | "Usa luz de ventana lateral, evita el flash" |
 | **Arquitectura / ciudad** | Líneas verticales convergentes | Avisar de inclinación · corrección de perspectiva posterior | "Pon el móvil recto: 0° de inclinación" |
 | **Acción / niños / mascotas** | Sujeto que se mueve rápido | Obturación rápida (≤ 1/500 s si hay control manual) · ráfaga · enfoque con seguimiento | "Baja a la altura del animal" |
@@ -551,7 +559,7 @@ complementarias:
 
 | Nivel | Tus móviles | Qué se activa |
 |---|---|---|
-| **A−** | Galaxy S22+ | Toda la visión en vivo, extensiones de Samsung, posprocesado completo en GPU. |
+| **A−** | Galaxy S22+ | Toda la visión en vivo, Auto y Bokeh de Samsung, posprocesado completo en GPU. |
 | **B** | Honor Magic 8 Lite | Visión en vivo completa a algo menos de frecuencia; posprocesado pesado en segundo plano; NPU para super-resolución si es compatible. |
 
 La app mide el móvil la primera vez (mini-benchmark de unos 5 s) y ajusta el nivel automáticamente.
@@ -591,7 +599,8 @@ Para ver todas tus fotos se usa la galería normal del móvil; la app abre cualq
   usan las extensiones cuando existen y un pipeline propio cuando no.
 - La resolución máxima, el control manual y el RAW dependen de lo que cada fabricante abra a otras apps; se mide
   en la Fase 1.
-- En el S22+ el acceso al teleobjetivo es a través de la cámara lógica (zoom); se comprobará en la Fase 1.
+- En el S22+ el tele y el ultra gran angular se usan a través de la cámara lógica (zoom 0,6×–10×). En el Honor solo
+  es accesible la cámara principal.
 - Al llevar todos los modelos dentro, el APK será grande (unos 300–500 MB).
 - El emulador de Android no sirve para probar la cámara: todas las pruebas se harán en tus dos móviles.
 

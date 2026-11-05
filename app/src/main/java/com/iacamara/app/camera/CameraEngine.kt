@@ -41,6 +41,9 @@ enum class Lens { BACK, FRONT }
  */
 enum class PhotoMode(val label: String, val extensionMode: Int) {
     FOTO("FOTO", ExtensionMode.NONE),
+
+    /** Procesado automático del fabricante (en el S22+, el de Samsung). */
+    AUTO("AUTO", ExtensionMode.AUTO),
     NOCHE("NOCHE", ExtensionMode.NIGHT),
     HDR("HDR", ExtensionMode.HDR),
     RETRATO("RETRATO", ExtensionMode.BOKEH),
@@ -62,7 +65,6 @@ data class CameraUiState(
     val availableModes: List<PhotoMode> = listOf(PhotoMode.FOTO),
     val flash: FlashSetting = FlashSetting.OFF,
     val hasFlash: Boolean = false,
-    val highRes: Boolean = false,
     val captureMegapixels: Float? = null,
     val zoomRatio: Float = 1f,
     val minZoom: Float = 1f,
@@ -76,9 +78,9 @@ data class CameraUiState(
  * Motor de cámara: abre la cámara con CameraX, aplica los ajustes y guarda las fotos.
  * Más adelante el Director IA controlará este motor de forma automática.
  */
-class CameraEngine(private val context: Context, initialHighRes: Boolean) {
+class CameraEngine(private val context: Context) {
 
-    private val _state = MutableStateFlow(CameraUiState(highRes = initialHighRes))
+    private val _state = MutableStateFlow(CameraUiState())
     val state: StateFlow<CameraUiState> = _state.asStateFlow()
 
     private val mainExecutor = ContextCompat.getMainExecutor(context)
@@ -131,23 +133,19 @@ class CameraEngine(private val context: Context, initialHighRes: Boolean) {
         .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
         .build()
 
-    private fun captureResolution(highRes: Boolean): ResolutionSelector {
-        val builder = ResolutionSelector.Builder()
-            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
-            .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
-        if (highRes) {
-            // Permite los modos de máxima resolución del sensor (50/108 MP) si el fabricante los ofrece.
-            builder.setAllowedResolutionMode(ResolutionSelector.PREFER_HIGHER_RESOLUTION_OVER_CAPTURE_RATE)
-        }
-        return builder.build()
-    }
+    // Samsung y Honor solo entregan a otras apps la resolución agrupada del sensor
+    // (12,5 MP y 12 MP), así que se pide siempre la mayor disponible en 4:3.
+    private fun captureResolution(): ResolutionSelector = ResolutionSelector.Builder()
+        .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+        .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
+        .build()
 
-    private fun buildCapture(highRes: Boolean, flash: FlashSetting): ImageCapture = ImageCapture.Builder()
+    private fun buildCapture(flash: FlashSetting): ImageCapture = ImageCapture.Builder()
         .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
         .setJpegQuality(JPEG_QUALITY)
         .setFlashMode(flash.cameraXMode)
         .setTargetRotation(targetRotation)
-        .setResolutionSelector(captureResolution(highRes))
+        .setResolutionSelector(captureResolution())
         .build()
 
     private fun bind() {
@@ -171,21 +169,13 @@ class CameraEngine(private val context: Context, initialHighRes: Boolean) {
             .build()
         preview.setSurfaceProvider(sp)
 
-        val wantHighRes = current.highRes && mode == PhotoMode.FOTO
-        var capture = buildCapture(wantHighRes, current.flash)
+        val capture = buildCapture(current.flash)
         cameraProvider.unbindAll()
         val boundCamera = try {
             cameraProvider.bindToLifecycle(owner, selector, preview, capture)
-        } catch (first: Exception) {
-            // Algunos móviles no aceptan la máxima resolución con esta combinación: se reintenta en normal.
-            cameraProvider.unbindAll()
-            capture = buildCapture(false, current.flash)
-            try {
-                cameraProvider.bindToLifecycle(owner, selector, preview, capture)
-            } catch (second: Exception) {
-                _state.update { it.copy(ready = false, message = "No se pudo abrir la cámara: ${second.message}") }
-                return
-            }
+        } catch (e: Exception) {
+            _state.update { it.copy(ready = false, message = "No se pudo abrir la cámara: ${e.message}") }
+            return
         }
 
         camera = boundCamera
@@ -226,11 +216,6 @@ class CameraEngine(private val context: Context, initialHighRes: Boolean) {
     fun switchLens() {
         if (!_state.value.hasFrontCamera) return
         _state.update { it.copy(lens = if (it.lens == Lens.BACK) Lens.FRONT else Lens.BACK) }
-        bind()
-    }
-
-    fun setHighRes(enabled: Boolean) {
-        _state.update { it.copy(highRes = enabled) }
         bind()
     }
 

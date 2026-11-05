@@ -42,7 +42,7 @@ hay que desinstalar la versión anterior antes de instalar la nueva.
 | Fase | Contenido | Estado |
 |---|---|---|
 | 0 — Base | Proyecto Android, compilación automática del APK, firma fija, sin permiso de internet | ✅ |
-| 1 — Cámara sólida | Visor 3:4, disparo, zoom (0.6x/1x/2x/3x/10x y pellizco), toque para enfocar, flash, rejilla de tercios, nivel de horizonte y nivel de burbuja para fotos cenitales, modos Noche/HDR/Retrato del fabricante (si el móvil los ofrece), modo de máxima resolución, botones de volumen como disparador, diagnóstico de cámara | ✅ (pendiente de probar en tus móviles) |
+| 1 — Cámara sólida | Visor 3:4, disparo, zoom (0.6x/1x/2x/3x/10x y pellizco), toque para enfocar, flash, rejilla de tercios, nivel de horizonte y nivel de burbuja para fotos cenitales, modos AUTO y RETRATO de Samsung en el S22+, botones de volumen como disparador, diagnóstico de cámara | ✅ Diagnóstico hecho en ambos móviles ([DISPOSITIVOS.md](docs/DISPOSITIVOS.md)); pendiente la prueba de fotos |
 | 2 — Percepción en vivo | Escena, sujeto, caras, luz | Siguiente |
 
 ## Probar la versión actual

@@ -92,7 +92,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     val prefs = remember { AppPrefs(context.applicationContext) }
-    val engine = remember { CameraEngine(context.applicationContext, initialHighRes = prefs.highRes) }
+    val engine = remember { CameraEngine(context.applicationContext) }
     val state by engine.state.collectAsStateWithLifecycle()
 
     var showGrid by remember { mutableStateOf(prefs.grid) }
@@ -243,16 +243,6 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 onClick = {
                     showLevel = !showLevel
                     prefs.level = showLevel
-                },
-            )
-            TextToggle(
-                label = "MAX",
-                active = state.highRes,
-                rotation = iconRotation,
-                onClick = {
-                    val enabled = !state.highRes
-                    prefs.highRes = enabled
-                    engine.setHighRes(enabled)
                 },
             )
             RotatingIconButton(
