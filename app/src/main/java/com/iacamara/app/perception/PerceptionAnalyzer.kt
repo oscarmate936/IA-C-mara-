@@ -74,8 +74,8 @@ class PerceptionAnalyzer(
     @Volatile var zoomRatio: Float = 1f
 
     // Aceleración (NPU/GPU) con vuelta al procesador normal.
-    private val acceleratorStore = AcceleratorStore(appContext)
-    private val accelerator = Accelerator(appContext, acceleratorStore)
+    private val acceleratorStore = AcceleratorStore.get(appContext)
+    private val accelerator = Accelerator(acceleratorStore)
     @Volatile private var foreground = false
     @Volatile private var closedModels = false
 
@@ -204,26 +204,32 @@ class PerceptionAnalyzer(
         startAcceleration()
     }
 
-    /** Prueba en segundo plano el NPU y la GPU con cada modelo (o activa lo que ya funcionó antes). */
+    /**
+     * Prueba en segundo plano el NPU y la GPU con cada modelo (o activa lo que ya funcionó antes).
+     * Primero los más lentos en el procesador, que son los que más ganan.
+     */
     private fun startAcceleration() {
         val detections = { a: Any, b: Any -> OutputCheck.sameDetections(a, b) }
+        val hasDetections = { out: Any -> OutputCheck.hasDetections(out) }
+        saliencyModel?.let {
+            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.similar(a, b, 0.95f) }) { _, _ -> updateActive() })
+        }
+        yoloeModel?.let {
+            accelerator.optimize(Accelerator.Job(it, detections, informative = hasDetections) { _, _ -> updateActive() })
+        }
         yoloModel?.let { model ->
             accelerator.optimize(
-                Accelerator.Job(model, detections) { backend, _ ->
+                Accelerator.Job(model, detections, informative = hasDetections) { backend, _ ->
                     updateActive()
                     if (backend != Backend.CPU) tryBiggerDetector(model)
                 },
             )
         }
-        yoloeModel?.let { accelerator.optimize(Accelerator.Job(it, detections) { _, _ -> updateActive() }) }
-        saliencyModel?.let {
-            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.similar(a, b, 0.95f) }) { _, _ -> updateActive() })
+        aestheticModel?.let {
+            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.sameMeanScore(a, b) }) { _, _ -> updateActive() })
         }
         clipModel?.let {
             accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.similar(a, b, 0.98f) }) { _, _ -> updateActive() })
-        }
-        aestheticModel?.let {
-            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.sameMeanScore(a, b) }) { _, _ -> updateActive() })
         }
     }
 
@@ -238,22 +244,27 @@ class PerceptionAnalyzer(
             Accelerator.Job(
                 model = big,
                 check = { a, b -> OutputCheck.sameDetections(a, b) },
+                informative = { out -> OutputCheck.hasDetections(out) },
                 accept = { backend, ms, _ -> backend != Backend.CPU && ms <= 40f },
                 sampleFrom = small,
-            ) { backend, _ ->
-                if (backend == Backend.CPU || closedModels) {
-                    big.close()
-                } else {
-                    onnxModels += big
-                    yolo = YoloDetector(big, 512, yoloLabels)
-                    yoloModel = big
-                    yoloName = "YOLO11s"
-                    onnxModels -= small
-                    small.close()
-                    updateActive()
-                }
-            },
+            ) { backend, _ -> switchDetector(small, big, backend) },
         )
+    }
+
+    /** Cambia a YOLO11s entre dos fotogramas (o lo descarta). Siempre se cierra el que sobra. */
+    @Synchronized
+    private fun switchDetector(small: OnnxModel, big: OnnxModel, backend: Backend) {
+        if (backend == Backend.CPU || closedModels) {
+            big.close()
+            return
+        }
+        onnxModels += big
+        yolo = YoloDetector(big, 512, yoloLabels)
+        yoloModel = big
+        yoloName = "YOLO11s"
+        onnxModels -= small
+        small.close()
+        updateActive()
     }
 
     /** Hay algún modelo acelerado con la cámara a la vista (para la protección contra cierres). */
@@ -337,24 +348,26 @@ class PerceptionAnalyzer(
         // Caras: en cada fotograma (muy rápido).
         val faces = faceDetector?.detect(mpImage)?.detections().orEmpty()
             .map { normalize(it.boundingBox(), w, h) }
+        // Mientras se mide la velocidad de un acelerador, el resto de modelos espera (comparación justa).
+        val paused = accelerator.measuring
 
         // Tareas medianas: escena (CLIP) o estética (NIMA), la que más atrasada vaya.
         val medium = listOfNotNull(
             clip?.let { "escena" to labelsClock.overdue(now, slowdown) },
             aestheticScorer?.let { "estética" to aestheticClock.overdue(now, slowdown) },
-        ).filter { it.second >= 1f }.maxByOrNull { it.second }?.first
+        ).filter { it.second >= 1f && !paused }.maxByOrNull { it.second }?.first
         when (medium) {
             "escena" -> timed(labelsClock, now) { runClip(bitmap) }
             "estética" -> timed(aestheticClock, now) { runAesthetic(bitmap) }
         }
-        if (faces.isNotEmpty() && landmarksClock.overdue(now, slowdown) >= 1f) {
+        if (faces.isNotEmpty() && !paused && landmarksClock.overdue(now, slowdown) >= 1f) {
             timed(landmarksClock, now) { runLandmarks(mpImage) }
         } else if (faces.isEmpty()) {
             lastFaceDetails = emptyList()
         }
         // Cuerpo: solo si hay personas a la vista.
         val people = faces.isNotEmpty() || lastObjects.any { it.label == "person" }
-        if (people && poseClock.overdue(now, slowdown) >= 1f) {
+        if (people && !paused && poseClock.overdue(now, slowdown) >= 1f) {
             timed(poseClock, now) { runPose(mpImage) }
         } else if (!people) {
             lastPose = null
@@ -365,7 +378,7 @@ class PerceptionAnalyzer(
             yolo?.let { "yolo" to yoloClock.overdue(now, slowdown) },
             yoloe?.let { "yoloe" to yoloeClock.overdue(now, slowdown) },
             saliencyDetector?.let { "saliencia" to saliencyClock.overdue(now, slowdown) },
-        ).filter { it.second >= 1f }.maxByOrNull { it.second }?.first
+        ).filter { it.second >= 1f && !paused }.maxByOrNull { it.second }?.first
         when (heavy) {
             "yolo" -> timed(yoloClock, now) { runYolo(bitmap) }
             "yoloe" -> timed(yoloeClock, now) { runOpenVocab(bitmap) }
@@ -381,7 +394,7 @@ class PerceptionAnalyzer(
         }
 
         val subjectInModel = chooseSubject(faces, lastObjects, salientModel)
-        if (structureClock.overdue(now, slowdown) >= 1f) {
+        if (!paused && structureClock.overdue(now, slowdown) >= 1f) {
             timed(structureClock, now) { runStructure(bitmap, subjectInModel?.box) }
         }
         val light = lightAnalyzer.analyze(bitmap, subjectInModel?.box)
@@ -422,7 +435,7 @@ class PerceptionAnalyzer(
             faceDetails = lastFaceDetails.map { it.copy(box = toP(it.box)) },
             namedObjects = lastOpenVocab.map { it.copy(label = spanishOpen(it.label), box = toP(it.box)) },
             timings = mapOf(
-                "$yoloName ${backendOf(yoloModel)}" to yoloClock.averageMs.toInt(),
+                yoloLabel() to yoloClock.averageMs.toInt(),
                 "YOLOE ${backendOf(yoloeModel)}" to yoloeClock.averageMs.toInt(),
                 "Saliencia ${backendOf(saliencyModel)}" to saliencyClock.averageMs.toInt(),
                 "Escena ${backendOf(clipModel)}" to labelsClock.averageMs.toInt(),
@@ -448,13 +461,23 @@ class PerceptionAnalyzer(
         clock.record(now, SystemClock.elapsedRealtime() - t)
     }
 
-    private fun backendOf(model: OnnxModel?): String = model?.backend?.label ?: "—"
+    private fun yoloLabel(): String {
+        val testingBig = yoloName == "YOLO11n" && accelerator.probing?.startsWith("$YOLO_S_KEY ") == true
+        return "$yoloName ${backendOf(yoloModel)}" + if (testingBig) " (probando YOLO11s…)" else ""
+    }
+
+    private fun backendOf(model: OnnxModel?): String {
+        val m = model ?: return "—"
+        val testing = accelerator.probing?.takeIf { it.startsWith(m.key + " ") }?.substringAfter(' ')
+        return if (testing != null) "${m.backend.label} (probando $testing…)" else m.backend.label
+    }
 
     private fun runClip(bitmap: Bitmap) {
         val scores = clip?.classify(bitmap) ?: return
         lastSceneScores = scores
         // CLIP también confirma si hay un animal (para descartar "animales" dudosos de YOLO11).
-        animalEvidence = (scores[SceneType.MASCOTA] ?: 0f) >= 0.05f
+        // Umbral bajo: en un salón o un paisaje casi toda la probabilidad se la lleva la escena.
+        animalEvidence = (scores[SceneType.MASCOTA] ?: 0f) >= 0.02f
     }
 
     private fun runAesthetic(bitmap: Bitmap) {
@@ -507,7 +530,11 @@ class PerceptionAnalyzer(
         // Veto: si el detector de vocabulario abierto ve otra cosa (no animal) en el mismo sitio,
         // un "animal" dudoso de YOLO11 se descarta (la "jirafa" de hierro).
         val filtered = raw.filter { d ->
-            if (!DetectionFilter.accept(d, animalEvidence)) return@filter false
+            // El detector de vocabulario abierto también vale como confirmación de un animal.
+            val evidence = animalEvidence || lastOpenVocab.any { o ->
+                o.label in OPEN_VOCAB_ANIMALS && o.label !in HUMANS && o.score >= 0.3f && o.box.iou(d.box) >= 0.3f
+            }
+            if (!DetectionFilter.accept(d, evidence)) return@filter false
             if (d.label !in SceneRules.ANIMALS || d.score >= 0.8f) return@filter true
             lastOpenVocab.none { o -> o.label !in OPEN_VOCAB_ANIMALS && o.score >= 0.35f && o.box.iou(d.box) >= 0.4f }
         }
@@ -676,6 +703,8 @@ class PerceptionAnalyzer(
         private const val OPEN_VOCAB_MIN = 0.25f
         private const val STRUCTURE_SIZE = 160f
 
+        private val HUMANS = setOf("person", "child", "baby")
+
         /** Nombres del vocabulario abierto que sí son animales (no vetan a un animal de YOLO11). */
         private val OPEN_VOCAB_ANIMALS = setOf(
             "person", "child", "baby", "dog", "cat", "bird", "chicken", "horse", "cow", "goat", "pig",
@@ -727,8 +756,9 @@ private class MpModel<T : AutoCloseable>(
                 onGpu = true
                 return
             }
-            store.markBroken(key, Backend.GPU)
+            store.markBroken(key, Backend.GPU, gpu.exceptionOrNull()?.let { "${it.javaClass.simpleName}: ${it.message ?: ""}" } ?: "")
         }
+        store.choose(key, Backend.CPU)
         model = factory(Delegate.CPU)
         onGpu = false
     }
@@ -737,14 +767,19 @@ private class MpModel<T : AutoCloseable>(
         val m = model ?: return null
         if (onGpu && !verified) {
             return try {
-                store.guarded(key, Backend.GPU) { block(m) }.also { verified = true }
+                store.guarded(key, Backend.GPU) { block(m) }.also {
+                    verified = true
+                    store.choose(key, Backend.GPU)
+                }
             } catch (e: Throwable) {
                 Log.w("Percepcion", "$key no funciona en la GPU: se usa el procesador", e)
-                store.markBroken(key, Backend.GPU)
+                store.markBroken(key, Backend.GPU, "${e.javaClass.simpleName}: ${e.message ?: ""}")
                 runCatching { m.close() }
                 onGpu = false
-                model = runCatching { factory(Delegate.CPU) }.getOrNull()
-                null
+                store.choose(key, Backend.CPU)
+                val cpu = runCatching { factory(Delegate.CPU) }.getOrNull()
+                model = cpu
+                cpu?.let { runCatching { block(it) }.getOrNull() }
             }
         }
         return block(m)

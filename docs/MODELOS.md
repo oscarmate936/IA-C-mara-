@@ -24,8 +24,11 @@ Notas:
   detecciones, mismo mapa o vector) y es al menos un 15 % más rápido. El resultado se recuerda en cada móvil y el grafo
   compilado para el NPU se guarda para no recompilarlo. Los modelos de MediaPipe (ojos y cuerpo) intentan la GPU.
   Si el controlador de un chip cierra la app durante la prueba, al volver a abrirla ese acelerador queda descartado;
-  si se cierra de golpe dos veces con la cámara abierta, se desactiva la aceleración. El panel 📊 muestra dónde corre
-  cada modelo (NPU, GPU o CPU) y cuánto tarda.
+  si se cierra de golpe dos veces seguidas con la cámara abierta, se desactiva la aceleración. Para que la comparación
+  sea justa, mientras se mide la velocidad el visor pausa los demás modelos; los detectores solo se comparan con una
+  imagen en la que detecten algo (si no, un acelerador roto "coincidiría"). Se prueban primero los modelos más lentos.
+  El panel 📊 muestra dónde corre cada modelo (NPU, GPU o CPU), cuánto tarda y qué se está probando; el informe de
+  Diagnóstico (ⓘ → Copiar) incluye la sección «ACELERACIÓN» con los tiempos medidos y el motivo de cada descarte.
 - Las librerías de Qualcomm (`com.qualcomm.qti:qnn-runtime`) solo incluyen las de los chips Hexagon V69 (Snapdragon
   8 Gen 1), V73, V75 y V79; añaden ~53 MB al APK.
 

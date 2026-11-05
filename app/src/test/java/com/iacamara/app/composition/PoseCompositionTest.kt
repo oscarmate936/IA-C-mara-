@@ -116,7 +116,7 @@ class PoseCompositionTest {
     fun laEsteticaCuentaEnLaPuntuacion() {
         val pose = standing(0.33f, 0.15f, 0.85f)
         val box = NRect(0.25f, 0.15f, 0.41f, 0.85f)
-        val bonita = CompositionEngine.evaluate(input(pose, box, aesthetic = 5.0f))
+        val bonita = CompositionEngine.evaluate(input(pose, box, aesthetic = 5.2f))
         val fea = CompositionEngine.evaluate(input(pose, box, aesthetic = 3.2f))
         assertEquals(1f, bonita.criteria["estética"]!!, 0.001f)
         assertEquals(0f, fea.criteria["estética"]!!, 0.001f)

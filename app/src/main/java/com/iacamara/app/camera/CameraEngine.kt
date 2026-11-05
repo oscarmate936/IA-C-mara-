@@ -58,6 +58,7 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.math.log2
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -441,6 +442,13 @@ class CameraEngine(private val context: Context) {
         } finally {
             runCatching { cam.cameraControl.setExposureCompensationIndex(original) }
         }
+        // La exposición real de cada foto (EXIF: tiempo × ISO) manda sobre la pedida: si la cámara no
+        // llegó a aplicar del todo la compensación, la fusión usa lo que de verdad se captó.
+        val light = result.map { it.first.exposureProduct }
+        val middle = light.getOrNull(1)
+        if (result.size == 3 && middle != null && light.all { it != null }) {
+            return result.mapIndexed { i, (frame, _) -> frame to log2(light[i]!! / middle).toFloat() }
+        }
         return result
     }
 
@@ -455,9 +463,15 @@ class CameraEngine(private val context: Context) {
             for (i in frames.indices) {
                 if (scorer == null && beauty == null) break
                 runCatching {
-                    val small = sources[i].decodeSmall(4).rotated(frames[i].rotationDegrees)
-                    eyes[i] = scorer?.invoke(small) ?: 0f
-                    aesthetic[i] = beauty?.invoke(small)
+                    val raw = sources[i].decodeSmall(4)
+                    val small = raw.rotated(frames[i].rotationDegrees)
+                    try {
+                        eyes[i] = scorer?.invoke(small) ?: 0f
+                        aesthetic[i] = beauty?.invoke(small)
+                    } finally {
+                        if (small !== raw) small.recycle()
+                        raw.recycle()
+                    }
                 }
             }
             // Nitidez primero, luego ojos abiertos; la estética (NIMA) desempata entre fotos parecidas.
@@ -467,7 +481,7 @@ class CameraEngine(private val context: Context) {
             val best = BurstPipeline.bestFrame(sources) { i ->
                 eyes[i] * 2f + (aesthetic[i]?.let { (it - low) / range * 0.3f } ?: 0f)
             }
-            return PhotoSaver.saveJpeg(context, frames[best].jpeg)
+            return PhotoSaver.saveJpeg(context, frames[best].jpeg, frames[best].rotationDegrees)
         } finally {
             sources.forEach { it.close() }
         }

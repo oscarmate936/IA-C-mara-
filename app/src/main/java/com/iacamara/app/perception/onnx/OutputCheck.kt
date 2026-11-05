@@ -20,7 +20,8 @@ object OutputCheck {
         val ref = rows(reference).filter { it[4] >= minScore }
         val out = rows(candidate)
         val strongOut = out.count { it[4] >= minScore + 0.15f }
-        if (ref.isEmpty()) return strongOut == 0
+        // Sin detecciones de referencia no se puede comprobar nada: no se da por bueno.
+        if (ref.isEmpty()) return false
         var matched = 0
         for (r in ref) {
             val hit = out.any { o ->
@@ -30,6 +31,9 @@ object OutputCheck {
         }
         return matched >= (ref.size * 0.8f) && strongOut <= ref.size + 2
     }
+
+    /** La salida de un detector sirve para comparar si tiene al menos una detección clara. */
+    fun hasDetections(output: Any, minScore: Float = 0.3f): Boolean = rows(output).any { it[4] >= minScore }
 
     /** Salidas densas (mapas, vectores): misma "forma" según el coseno entre ambas. */
     fun similar(reference: Any, candidate: Any, minCosine: Float): Boolean {

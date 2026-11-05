@@ -329,6 +329,8 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 structure = p.structure,
                 pose = p.pose,
                 aesthetic = p.aesthetic,
+                // Más de ~37° hacia arriba o hacia abajo: techo, cielo o suelo, sin horizonte.
+                steepView = level != null && !level.isFlat && abs(level.nz) > 0.6f,
             )
             // La guía automática solo cambia si la escena la pide varias veces seguidas (sin parpadeos).
             val style = forcedGuide ?: guideStabilizer.update(CompositionEngine.chooseStyle(compositionInput))
@@ -355,6 +357,9 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 autoProgress = 0f
                 smart.reset()
             }
+            // Durante una ráfaga (noche, HDR, mejor foto) no se toca el enfoque ni la exposición:
+            // cambiarían entre fotos y estropearían el horquillado o el alineado.
+            if (s.capturing) return@collect
             if (now - auto.lastManualFocusMs > MANUAL_FOCUS_HOLD_MS && viewSize.width > 0) {
                 val target = d.focusTarget
                 if (target != null) {

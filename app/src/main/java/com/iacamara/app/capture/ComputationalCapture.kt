@@ -23,8 +23,28 @@ import java.util.concurrent.Executor
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/** Una foto de la ráfaga tal como la entrega la cámara (JPEG) y su giro. */
-class CapturedFrame(val jpeg: ByteArray, val rotationDegrees: Int)
+/**
+ * Una foto de la ráfaga tal como la entrega la cámara (JPEG), el giro que necesita para verse derecha
+ * y la exposición real con la que se hizo (del EXIF), si la trae.
+ */
+class CapturedFrame(val jpeg: ByteArray, val rotationDegrees: Int, val exposureNs: Long? = null, val iso: Int? = null) {
+    /** Cantidad de luz captada (tiempo × ISO), para saber cuántos EV hay entre dos fotos. */
+    val exposureProduct: Double? get() = exposureNs?.let { t -> iso?.let { t.toDouble() * it } }?.takeIf { it > 0.0 }
+
+    companion object {
+        fun fromJpeg(jpeg: ByteArray, rotationDegrees: Int): CapturedFrame {
+            val exif = runCatching { ExifInterface(ByteArrayInputStream(jpeg)) }.getOrNull()
+            val seconds = exif?.getAttributeDouble(ExifInterface.TAG_EXPOSURE_TIME, -1.0) ?: -1.0
+            val iso = exif?.getAttributeInt(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, -1) ?: -1
+            return CapturedFrame(
+                jpeg,
+                rotationDegrees,
+                exposureNs = if (seconds > 0.0) (seconds * 1e9).toLong() else null,
+                iso = if (iso > 0) iso else null,
+            )
+        }
+    }
+}
 
 /** Hace una foto y la devuelve en memoria (sin guardarla), para las técnicas de varias fotos. */
 suspend fun ImageCapture.captureJpeg(executor: Executor): CapturedFrame = suspendCancellableCoroutine { cont ->
@@ -34,7 +54,7 @@ suspend fun ImageCapture.captureJpeg(executor: Executor): CapturedFrame = suspen
                 val buffer = image.planes[0].buffer
                 val bytes = ByteArray(buffer.remaining())
                 buffer.get(bytes)
-                cont.resume(CapturedFrame(bytes, image.imageInfo.rotationDegrees))
+                cont.resume(CapturedFrame.fromJpeg(bytes, image.imageInfo.rotationDegrees))
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             } finally {
@@ -135,10 +155,27 @@ object PhotoSaver {
         context.contentResolver.update(uri, values, null, null)
     }
 
-    /** Guarda un JPEG tal cual (la mejor foto de una ráfaga: conserva su calidad y su EXIF). */
-    fun saveJpeg(context: Context, jpeg: ByteArray): Uri? {
+    /**
+     * Guarda un JPEG tal cual (la mejor foto de una ráfaga: conserva su calidad y su EXIF). Si el EXIF no
+     * dice cómo girarla (algunos móviles no lo ponen en las fotos que se piden a memoria), se añade.
+     */
+    fun saveJpeg(context: Context, jpeg: ByteArray, rotationDegrees: Int): Uri? {
         val uri = newEntry(context) ?: return null
         context.contentResolver.openOutputStream(uri)?.use { it.write(jpeg) }
+        val wanted = orientation(rotationDegrees)
+        val current = runCatching {
+            ExifInterface(ByteArrayInputStream(jpeg)).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED)
+        }.getOrDefault(ExifInterface.ORIENTATION_UNDEFINED)
+        val currentIsNormal = current == ExifInterface.ORIENTATION_NORMAL || current == ExifInterface.ORIENTATION_UNDEFINED
+        if (current != wanted && !(currentIsNormal && wanted == ExifInterface.ORIENTATION_NORMAL)) {
+            runCatching {
+                context.contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
+                    val exif = ExifInterface(pfd.fileDescriptor)
+                    exif.setAttribute(ExifInterface.TAG_ORIENTATION, wanted.toString())
+                    exif.saveAttributes()
+                }
+            }
+        }
         publish(context, uri)
         return uri
     }

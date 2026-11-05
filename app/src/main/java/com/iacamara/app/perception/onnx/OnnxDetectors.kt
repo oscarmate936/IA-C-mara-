@@ -41,7 +41,7 @@ class OnnxModel(context: Context, private val assetPath: String, val key: String
     @Volatile private var lastSample: Sample? = null
 
     init {
-        session = Sessions.create(appContext, env, readBytes(), Backend.CPU, threads)
+        session = Sessions.create(appContext, env, ::readBytes, Backend.CPU, threads)
         inputName = session.inputNames.first()
     }
 
@@ -71,6 +71,12 @@ class OnnxModel(context: Context, private val assetPath: String, val key: String
 
     fun sample(): Sample? = lastSample
 
+    /** Descarta la muestra actual (no servía para comparar) y espera la siguiente. */
+    fun discardSample() {
+        lastSample = null
+        sampleWanted = true
+    }
+
     /** Ejecuta una muestra en `s`, o en la sesión actual si es null. */
     fun runSample(s: OrtSession?, sample: Sample): Any {
         val data = FloatBuffer.wrap(sample.data)
@@ -82,7 +88,7 @@ class OnnxModel(context: Context, private val assetPath: String, val key: String
     }
 
     fun createSession(backend: Backend, cache: File?): OrtSession =
-        Sessions.create(appContext, env, readBytes(), backend, threads, cache)
+        Sessions.create(appContext, env, ::readBytes, backend, threads, cache)
 
     /** Cambia de acelerador entre dos ejecuciones (nunca a mitad de una). */
     fun swap(newSession: OrtSession, newBackend: Backend) {

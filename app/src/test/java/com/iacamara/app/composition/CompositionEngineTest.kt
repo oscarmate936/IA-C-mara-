@@ -95,6 +95,26 @@ class CompositionEngineTest {
     }
 
     @Test
+    fun giroGrandeEsIntencionado() {
+        // 35°: plano holandés a propósito. No se pide enderezar ni baja la nota.
+        val g = CompositionEngine.evaluate(input(box = NRect(0.253f, 0.269f, 0.413f, 0.429f), roll = 35f))
+        assertNull(g.criteria["nivel"])
+        assertTrue(g.message == null || !g.message!!.contains("Endereza"))
+    }
+
+    @Test
+    fun mirandoAlTechoSoloSeCorrigenGirosPequenos() {
+        val box = NRect(0.253f, 0.269f, 0.413f, 0.429f)
+        val grande = CompositionEngine.evaluate(input(box = box, roll = 15f).copy(steepView = true))
+        assertNull(grande.criteria["nivel"])
+        val pequeno = CompositionEngine.evaluate(input(box = box, roll = 6f).copy(steepView = true))
+        assertTrue(pequeno.message!!.contains("Endereza"))
+        // De frente, 15° sí se corrige.
+        val frente = CompositionEngine.evaluate(input(box = box, roll = 15f))
+        assertTrue(frente.message!!.contains("Endereza"))
+    }
+
+    @Test
     fun movilTorcido() {
         val g = CompositionEngine.evaluate(input(box = NRect(0.253f, 0.269f, 0.413f, 0.429f), roll = 4f))
         assertTrue(g.message!!.contains("Endereza"))

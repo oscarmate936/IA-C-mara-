@@ -38,7 +38,10 @@ class OutputCheckTest {
             floatArrayOf(60f, 60f, 90f, 90f, 0.9f, 5f),
         )
         assertFalse(OutputCheck.sameDetections(detections(), garbage))
-        assertTrue(OutputCheck.sameDetections(detections(), detections()))
+        // Una imagen sin nada que detectar no sirve para comprobar un acelerador.
+        assertFalse(OutputCheck.sameDetections(detections(), detections()))
+        assertFalse(OutputCheck.hasDetections(detections()))
+        assertTrue(OutputCheck.hasDetections(detections(person)))
     }
 
     @Test

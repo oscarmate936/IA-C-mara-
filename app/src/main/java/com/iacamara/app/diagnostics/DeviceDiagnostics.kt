@@ -16,6 +16,7 @@ import androidx.camera.extensions.ExtensionMode
 import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.lifecycle.ProcessCameraProvider
 import com.iacamara.app.BuildConfig
+import com.iacamara.app.perception.onnx.AcceleratorStore
 import com.iacamara.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -39,7 +40,8 @@ object DeviceDiagnostics {
             append("IA Cámara ").append(BuildConfig.VERSION_NAME).append(" · Informe de diagnóstico\n\n")
             append(device).append('\n')
             append(cameraX).append('\n')
-            append(camera2)
+            append(camera2).append('\n')
+            append(runCatching { AcceleratorStore.get(context).report() }.getOrDefault(""))
         }
     }
 

@@ -48,6 +48,8 @@ data class CompositionInput(
     val pose: BodyPose? = null,
     /** Nota de estética 1–10 (NIMA). */
     val aesthetic: Float? = null,
+    /** La cámara apunta muy hacia arriba o hacia abajo (techo, cielo, suelo): no hay horizonte a la vista. */
+    val steepView: Boolean = false,
 )
 
 /** Dirección en la que mover el móvil, desde el punto de vista del usuario. */
@@ -91,6 +93,12 @@ object CompositionEngine {
 
     private const val THIRD = 1f / 3f
 
+    /** A partir de este giro (grados) se entiende que la inclinación es a propósito (plano holandés). */
+    private const val DUTCH_ANGLE = 20f
+
+    /** Mirando muy arriba o abajo, solo se corrigen giros menores que este (descuidos). */
+    private const val STEEP_MAX_ROLL = 10f
+
     /** La guía que elegiría la IA para esta escena. */
     fun chooseStyle(input: CompositionInput): GuideStyle =
         autoStyle(input, input.subjectBox?.let { toViewRect(it, input) }, viewStructure(input))
@@ -101,14 +109,19 @@ object CompositionEngine {
         val criteria = linkedMapOf<String, Float>()
         val problems = mutableListOf<Problem>()
 
-        // 1) Horizonte recto.
+        // 1) Horizonte recto. Un giro grande (plano holandés) se da por intencionado; mirando muy
+        //    hacia arriba o hacia abajo no hay horizonte, así que solo se avisa de giros pequeños.
         input.rollDegrees?.let { roll ->
-            val c = 1f - min(1f, abs(roll) / 5f)
-            criteria["nivel"] = c
-            if (abs(roll) >= 1.5f) {
-                // roll > 0: el móvil está girado a la izquierda (antihorario); se corrige girando a la derecha.
-                val side = if (roll > 0) "derecha" else "izquierda"
-                problems += Problem(c, 1.2f, "Endereza el móvil: gíralo ${"%.0f".format(abs(roll))}° hacia la $side")
+            val intentional = abs(roll) > DUTCH_ANGLE || (input.steepView && abs(roll) >= STEEP_MAX_ROLL)
+            if (!intentional) {
+                val c = 1f - min(1f, abs(roll) / 5f)
+                criteria["nivel"] = c
+                if (abs(roll) >= 1.5f) {
+                    // roll > 0: el móvil está girado a la izquierda (antihorario); se corrige girando a la derecha.
+                    val side = if (roll > 0) "derecha" else "izquierda"
+                    val weight = if (input.steepView) 0.8f else 1.2f
+                    problems += Problem(c, weight, "Endereza el móvil: gíralo ${"%.0f".format(abs(roll))}° hacia la $side")
+                }
             }
         }
 
@@ -311,7 +324,8 @@ object CompositionEngine {
         }
 
         // 10) Estética aprendida (NIMA): apoya a las reglas, sin consejo propio.
-        input.aesthetic?.let { criteria["estética"] = ((it - 3.3f) / 1.2f).coerceIn(0f, 1f) }
+        // Las fotos del móvil suelen sacar 3,5–5 en NIMA: 3,3 → 0 y 5,0 → 1.
+        input.aesthetic?.let { criteria["estética"] = ((it - 3.3f) / 1.7f).coerceIn(0f, 1f) }
 
         val score = weightedScore(criteria, input.scene, box != null)
         val worst = problems.minByOrNull { it.value / it.weight }
