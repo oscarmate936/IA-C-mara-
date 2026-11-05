@@ -56,7 +56,10 @@ class PerceptionAnalyzer(
     private val lightAnalyzer = LightAnalyzer()
     private val sceneStabilizer = SceneStabilizer()
     private val conditionStabilizer = ConditionStabilizer()
+    private val objectTracker = ObjectTracker()
 
+    private var lastFront = false
+    private var lastDegrees = 0
     private var lastFrameMs = 0L
     private var lastObjectsMs = 0L
     private var lastLabelsMs = 0L
@@ -132,6 +135,12 @@ class PerceptionAnalyzer(
             ensureModels()
             checkThermal(now)
             val front = frontCamera
+            if (front != lastFront || deviceDegrees != lastDegrees) {
+                // Al cambiar de cámara o de orientación, los objetos anteriores ya no valen.
+                objectTracker.clear()
+                lastFront = front
+                lastDegrees = deviceDegrees
+            }
             val modelRotation = FrameMath.modelRotation(deviceDegrees, front)
             val totalRotation = (image.imageInfo.rotationDegrees + modelRotation) % 360
             val raw = image.toBitmap()
@@ -157,10 +166,12 @@ class PerceptionAnalyzer(
         // Objetos: ~10 veces por segundo.
         if (now - lastObjectsMs >= OBJECTS_INTERVAL_MS * slowdown) {
             lastObjectsMs = now
-            lastObjects = objectDetector?.detect(mpImage)?.detections().orEmpty().mapNotNull { d ->
+            val raw = objectDetector?.detect(mpImage)?.detections().orEmpty().mapNotNull { d ->
                 val category = d.categories().firstOrNull() ?: return@mapNotNull null
                 DetectedObject(category.categoryName(), normalize(d.boundingBox(), w, h), category.score())
             }
+            // Solo cuentan los objetos con suficiente seguridad y que se repiten en varios fotogramas.
+            lastObjects = objectTracker.update(raw.filter(DetectionFilter::accept))
         }
 
         // Tipo de escena: ~2 veces por segundo.

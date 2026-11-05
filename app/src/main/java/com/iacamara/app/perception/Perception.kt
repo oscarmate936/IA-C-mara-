@@ -12,6 +12,16 @@ data class NRect(val left: Float, val top: Float, val right: Float, val bottom: 
     val centerX: Float get() = (left + right) / 2f
     val centerY: Float get() = (top + bottom) / 2f
 
+    /** Intersección sobre unión: 1 = misma caja, 0 = no se tocan. */
+    fun iou(other: NRect): Float {
+        val w = min(right, other.right) - max(left, other.left)
+        val h = min(bottom, other.bottom) - max(top, other.top)
+        if (w <= 0f || h <= 0f) return 0f
+        val inter = w * h
+        val union = area + other.area - inter
+        return if (union > 0f) inter / union else 0f
+    }
+
     fun clamped(): NRect = NRect(
         left.coerceIn(0f, 1f),
         top.coerceIn(0f, 1f),
