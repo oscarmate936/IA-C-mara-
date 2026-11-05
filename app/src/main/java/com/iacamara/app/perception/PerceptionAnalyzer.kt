@@ -16,6 +16,7 @@ import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.facedetector.FaceDetector
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker
+import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
 import com.iacamara.app.perception.onnx.AcceleratorStore
 import com.iacamara.app.perception.onnx.Accelerator
@@ -502,8 +503,13 @@ class PerceptionAnalyzer(
 
     private fun runLandmarks(mpImage: MPImage) {
         val result = faceLandmarker.run { it.detect(mpImage) } ?: return
+        lastFaceDetails = faceDetailsOf(result)
+    }
+
+    /** Caja, ojos abiertos/cerrados y mirada de cada cara (coordenadas de la imagen analizada). */
+    private fun faceDetailsOf(result: FaceLandmarkerResult): List<FaceDetail> {
         val shapes = result.faceBlendshapes().orElse(null)
-        lastFaceDetails = result.faceLandmarks().mapIndexedNotNull { k, points ->
+        return result.faceLandmarks().mapIndexedNotNull { k, points ->
             if (points.size < 2) return@mapIndexedNotNull null
             val minX = points.minOf { it.x() }
             val maxX = points.maxOf { it.x() }
@@ -640,20 +646,13 @@ class PerceptionAnalyzer(
     private fun spanishOpen(label: String): String = yoloeSpanish[label] ?: label
 
     /**
-     * Para elegir la mejor foto de una ráfaga: fracción de caras con los ojos abiertos en una foto
-     * reducida y derecha, o null si no hay caras (o el modelo no está disponible).
+     * Para la ráfaga: las caras de una foto reducida y derecha con sus ojos abiertos o cerrados
+     * (coordenadas 0..1), o null si el modelo no está disponible.
      */
     @Synchronized
-    fun eyesOpenScore(bitmap: Bitmap): Float? {
+    fun faceStates(bitmap: Bitmap): List<FaceDetail>? {
         val result = faceLandmarker.run { it.detect(BitmapImageBuilder(bitmap).build()) } ?: return null
-        val shapes = result.faceBlendshapes().orElse(null) ?: return null
-        if (shapes.isEmpty()) return null
-        val open = shapes.count { face ->
-            val left = face.firstOrNull { it.categoryName() == "eyeBlinkLeft" }?.score() ?: 0f
-            val right = face.firstOrNull { it.categoryName() == "eyeBlinkRight" }?.score() ?: 0f
-            left < EYE_CLOSED && right < EYE_CLOSED
-        }
-        return open / shapes.size.toFloat()
+        return faceDetailsOf(result)
     }
 
     /** Caras en una foto reducida y derecha (para la mejora automática). Coordenadas 0..1. */

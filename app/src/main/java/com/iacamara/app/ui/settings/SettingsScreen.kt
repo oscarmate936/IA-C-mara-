@@ -47,6 +47,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
     val prefs = remember { AppPrefs(context.applicationContext) }
     var enhance by remember { mutableStateOf(prefs.enhance) }
     var geometry by remember { mutableStateOf(prefs.enhanceGeometry) }
+    var raw by remember { mutableStateOf(prefs.raw) }
     BackHandler(onBack = onBack)
 
     Column(
@@ -114,6 +115,24 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
                         prefs.enhanceGeometry = it
                     },
                 )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Section("Modo PRO")
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("Guardar también RAW (DNG)", color = Color.White, fontSize = 15.sp)
+                    Text(
+                        "El archivo del sensor sin procesar, para revelarlo después (Lightroom, Snapseed…). " +
+                            "Ocupa unos 20–25 MB por foto. Solo si el móvil lo permite.",
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 12.sp,
+                    )
+                }
+                Switch(checked = raw, onCheckedChange = {
+                    raw = it
+                    prefs.raw = it
+                })
             }
 
             Spacer(Modifier.height(12.dp))

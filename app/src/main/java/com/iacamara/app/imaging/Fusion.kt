@@ -104,6 +104,136 @@ object Fusion {
     }
 
     /**
+     * Combina, píxel a píxel, las muestras alineadas de todos los fotogramas con `combine`
+     * (recibe las muestras ARGB y cuántas hay; la primera es siempre la de la referencia).
+     * Franjas más finas que en el modo noche: aquí se guardan todas las muestras a la vez.
+     */
+    fun combine(
+        frames: List<FrameSource>,
+        flows: List<Flow>,
+        reference: Int,
+        out: IntArray,
+        onProgress: (Float) -> Unit = {},
+        combine: (IntArray, Int) -> Int,
+    ) {
+        val ref = frames[reference]
+        val w = ref.width
+        val h = ref.height
+        val n = frames.size
+        val margin = ceil(flows.maxOf { it.maxAbs }).toInt() + 2
+        val stripe = 48
+        val stripes = (h + stripe - 1) / stripe
+        val done = AtomicInteger()
+        val order = listOf(reference) + frames.indices.filter { it != reference }
+        Parallel.forRange(stripes) { s ->
+            val y0 = s * stripe
+            val y1 = min(h, y0 + stripe)
+            val rows = y1 - y0
+            val samples = IntArray(n * w * rows)
+            val counts = IntArray(w * rows)
+            val shift = FloatArray(2)
+            for (k in order) {
+                val ry0 = max(0, y0 - margin)
+                val ry1 = min(h, y1 + margin)
+                val src = frames[k].readRegion(0, ry0, w, ry1 - ry0)
+                val srcRows = ry1 - ry0
+                val flow = flows[k]
+                for (y in y0 until y1) {
+                    var bx = -1
+                    var fdx = 0f
+                    var fdy = 0f
+                    for (x in 0 until w) {
+                        if (x shr 3 != bx) {
+                            bx = x shr 3
+                            flow.at(x + 4f, y.toFloat(), shift)
+                            fdx = shift[0]
+                            fdy = shift[1]
+                        }
+                        val sx = x + fdx
+                        val sy = y + fdy - ry0
+                        if (sx < 0f || sy < 0f || sx > w - 1f || sy > srcRows - 1f) continue
+                        val i = (y - y0) * w + x
+                        samples[i * n + counts[i]] = bilinear(src, w, srcRows, sx, sy)
+                        counts[i]++
+                    }
+                }
+            }
+            val pixel = IntArray(n)
+            for (i in 0 until w * rows) {
+                val c = counts[i]
+                System.arraycopy(samples, i * n, pixel, 0, c)
+                out[y0 * w + i] = combine(pixel, c)
+            }
+            onProgress(done.incrementAndGet() / stripes.toFloat())
+        }
+    }
+
+    /**
+     * Mediana de cada canal de color: lo que solo aparece en algunas fotos (gente que pasa, coches)
+     * desaparece y lo que está quieto se queda. Por canales, para que un color distinto con el mismo
+     * brillo que el fondo no se cuele.
+     */
+    fun medianSample(samples: IntArray, n: Int): Int {
+        if (n == 0) return 0
+        if (n <= 2) return samples[0]
+        val v = IntArray(n)
+        fun median(shift: Int): Int {
+            for (k in 0 until n) v[k] = (samples[k] shr shift) and 0xFF
+            // Ordenación por inserción (pocas muestras).
+            for (a in 1 until n) {
+                val x = v[a]
+                var b = a - 1
+                while (b >= 0 && v[b] > x) {
+                    v[b + 1] = v[b]
+                    b--
+                }
+                v[b + 1] = x
+            }
+            return v[n / 2]
+        }
+        return argb(median(16), median(8), median(0))
+    }
+
+    /** Promedio (larga exposición de día: agua sedosa, nubes y gente desenfocadas por el movimiento). */
+    fun meanSample(samples: IntArray, n: Int): Int {
+        if (n == 0) return 0
+        var r = 0
+        var g = 0
+        var b = 0
+        for (k in 0 until n) {
+            val p = samples[k]
+            r += (p shr 16) and 0xFF
+            g += (p shr 8) and 0xFF
+            b += p and 0xFF
+        }
+        return argb((r + n / 2) / n, (g + n / 2) / n, (b + n / 2) / n)
+    }
+
+    /**
+     * Aclarar (larga exposición de noche): de cada píxel se queda el más luminoso, así las luces que
+     * se mueven (coches, estrellas) dejan una estela; el fondo se promedia para bajar el ruido.
+     */
+    fun lightenSample(samples: IntArray, n: Int): Int {
+        if (n == 0) return 0
+        val mean = meanSample(samples, n)
+        var best = samples[0]
+        var bestL = LumaPlane.luma(best)
+        for (k in 1 until n) {
+            val l = LumaPlane.luma(samples[k])
+            if (l > bestL) {
+                bestL = l
+                best = samples[k]
+            }
+        }
+        // Solo donde una muestra es claramente más brillante que la media hay una luz que pasa.
+        val ml = LumaPlane.luma(mean)
+        val t = ((bestL - ml - 12) / 40f).coerceIn(0f, 1f)
+        if (t <= 0f) return mean
+        fun mix(shift: Int) = ((((mean shr shift) and 0xFF) * (1 - t)) + ((best shr shift) and 0xFF) * t).toInt()
+        return argb(mix(16), mix(8), mix(0))
+    }
+
+    /**
      * HDR por horquillado, como las cámaras buenas:
      * 1. Se combinan las exposiciones en un mapa de luz real (lineal), corrigiendo la exposición de cada
      *    una y usando solo sus zonas bien expuestas: las luces salen de la foto oscura y las sombras de la

@@ -11,6 +11,7 @@ import android.provider.MediaStore
 import android.util.Size
 import android.view.Surface
 import android.graphics.Bitmap
+import android.graphics.ImageFormat
 import android.hardware.camera2.CaptureRequest
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
@@ -42,6 +43,12 @@ import com.iacamara.app.capture.rotated
 import com.iacamara.app.director.CapturePlan
 import com.iacamara.app.director.CaptureStrategy
 import com.iacamara.app.imaging.BurstPipeline
+import com.iacamara.app.imaging.FaceMerge
+import com.iacamara.app.imaging.ImageStats
+import com.iacamara.app.imaging.PixelRect
+import com.iacamara.app.perception.FaceDetail
+import com.iacamara.app.perception.FrameMath
+import com.iacamara.app.perception.NRect
 import com.iacamara.app.perception.CaptureMetadata
 import com.iacamara.app.settings.AppPrefs
 import com.iacamara.app.settings.EnhanceMode
@@ -82,6 +89,12 @@ enum class PhotoMode(val label: String, val extensionMode: Int, val vendor: Bool
 
     /** HDR propio: horquillado de exposiciones fusionado (Fase 4). */
     HDR_IA("HDR", ExtensionMode.NONE, false),
+
+    /** Quitar gente que pasa: ráfaga de ~5 s y mediana (Fase 5). */
+    SIN_GENTE("SIN GENTE", ExtensionMode.NONE, false),
+
+    /** Larga exposición sin trípode: agua sedosa o estelas de luz (Fase 5). */
+    LARGA_EXP("LARGA EXP.", ExtensionMode.NONE, false),
 
     /** Procesado automático del fabricante (en el S22+, el de Samsung). */
     AUTO("AUTO", ExtensionMode.AUTO, true),
@@ -140,6 +153,8 @@ data class CameraUiState(
     val pro: ProSettings? = null,
     /** Fotos que se están mejorando en segundo plano. */
     val enhancing: Int = 0,
+    /** En PRO se guarda también el RAW (DNG). */
+    val rawActive: Boolean = false,
 )
 
 /**
@@ -168,10 +183,10 @@ class CameraEngine(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     /**
-     * Puntúa los ojos abiertos en una foto reducida y derecha: fracción de caras con los ojos abiertos,
-     * o null si no hay caras. Lo proporciona la percepción (Face Landmarker).
+     * Caras de una foto reducida y derecha con sus ojos abiertos o cerrados (coordenadas 0..1).
+     * Lo proporciona la percepción (Face Landmarker).
      */
-    var eyeScorer: ((Bitmap) -> Float?)? = null
+    var faceStates: ((Bitmap) -> List<FaceDetail>?)? = null
     /** Nota de estética (NIMA, 1–10) de una foto reducida y derecha, para la ráfaga. */
     var aestheticScorer: ((Bitmap) -> Float?)? = null
     private var analyzer: ImageAnalysis.Analyzer? = null
@@ -242,13 +257,20 @@ class CameraEngine(private val context: Context) {
         .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
         .build()
 
-    private fun buildCapture(flash: FlashSetting): ImageCapture = ImageCapture.Builder()
+    private fun buildCapture(flash: FlashSetting, raw: Boolean = false): ImageCapture = ImageCapture.Builder()
         .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
         .setJpegQuality(JPEG_QUALITY)
         .setFlashMode(flash.cameraXMode)
         .setTargetRotation(targetRotation)
         .setResolutionSelector(captureResolution())
+        .apply { if (raw) setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW_JPEG) }
         .build()
+
+    /** ¿La cámara puede entregar RAW + JPEG a la vez? */
+    private fun rawSupported(provider: ProcessCameraProvider, selector: CameraSelector): Boolean = runCatching {
+        val info = provider.getCameraInfo(selector)
+        ImageCapture.OUTPUT_FORMAT_RAW_JPEG in ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats
+    }.getOrDefault(false)
 
     private fun bind() {
         val cameraProvider = provider ?: return
@@ -275,29 +297,47 @@ class CameraEngine(private val context: Context) {
         preview.setSurfaceProvider(sp)
         captureMetadata.clear()
 
-        val capture = buildCapture(current.flash)
         val analysisAllowed = !mode.vendor || ext == null ||
             runCatching { ext.isImageAnalysisSupported(base, mode.extensionMode) }.getOrDefault(false)
         val analysis = analyzer?.takeIf { analysisAllowed }?.let { buildAnalysis(it) }
+        val wantRaw = mode == PhotoMode.PRO && prefs.raw && rawSupported(cameraProvider, selector)
 
+        // Se prueba de la combinación más completa a la más sencilla: con RAW (si se pidió), con análisis
+        // de la IA, y si el móvil no acepta tantas salidas a la vez, sin ellas.
+        val attempts = buildList {
+            if (wantRaw) {
+                add(true to true)
+                add(true to false)
+            }
+            add(false to true)
+            add(false to false)
+        }.filter { (_, withAnalysis) -> !withAnalysis || analysis != null }
         cameraProvider.unbindAll()
-        var analysisActive = analysis != null
-        val boundCamera = try {
-            if (analysis != null) {
-                cameraProvider.bindToLifecycle(owner, selector, preview, capture, analysis)
-            } else {
-                cameraProvider.bindToLifecycle(owner, selector, preview, capture)
-            }
-        } catch (e: Exception) {
-            // Si el móvil no acepta las tres salidas a la vez, se abre sin análisis.
-            cameraProvider.unbindAll()
-            analysisActive = false
+        var boundCamera: Camera? = null
+        var capture: ImageCapture? = null
+        var analysisActive = false
+        var rawActive = false
+        var lastError: Exception? = null
+        for ((raw, withAnalysis) in attempts) {
+            val candidate = buildCapture(current.flash, raw)
             try {
-                cameraProvider.bindToLifecycle(owner, selector, preview, capture)
-            } catch (second: Exception) {
-                _state.update { it.copy(ready = false, message = "No se pudo abrir la cámara: ${second.message}") }
-                return
+                boundCamera = if (withAnalysis && analysis != null) {
+                    cameraProvider.bindToLifecycle(owner, selector, preview, candidate, analysis)
+                } else {
+                    cameraProvider.bindToLifecycle(owner, selector, preview, candidate)
+                }
+                capture = candidate
+                analysisActive = withAnalysis
+                rawActive = raw
+                break
+            } catch (e: Exception) {
+                lastError = e
+                cameraProvider.unbindAll()
             }
+        }
+        if (boundCamera == null || capture == null) {
+            _state.update { it.copy(ready = false, message = "No se pudo abrir la cámara: ${lastError?.message}") }
+            return
         }
 
         camera = boundCamera
@@ -323,6 +363,7 @@ class CameraEngine(private val context: Context) {
                 hasFlash = boundCamera.cameraInfo.hasFlashUnit(),
                 captureMegapixels = size?.let { s -> s.width * s.height / 1_000_000f },
                 analysisActive = analysisActive,
+                rawActive = rawActive,
                 exposureEv = 0f,
                 minEv = if (evSupported) exposure.exposureCompensationRange.lower * step else 0f,
                 maxEv = if (evSupported) exposure.exposureCompensationRange.upper * step else 0f,
@@ -433,6 +474,7 @@ class CameraEngine(private val context: Context) {
                     evs = FloatArray(bracket.size) { bracket[it].second }
                 }
                 else -> repeat(plan.frames) {
+                    if (it > 0 && plan.intervalMs > 0) delay(plan.intervalMs)
                     frames += capture.captureJpeg(mainExecutor)
                     updateProgress((it + 1f) / plan.frames * 0.3f, capturingFrames = true)
                 }
@@ -447,12 +489,21 @@ class CameraEngine(private val context: Context) {
                     CaptureStrategy.HDR -> mergeAndSave(frames, plan.description) { sources, report ->
                         BurstPipeline.hdr(sources, evs, report)
                     }
+                    CaptureStrategy.REMOVE_MOVING -> mergeAndSave(frames, plan.description) { sources, report ->
+                        BurstPipeline.removeMoving(sources, report)
+                    }
+                    CaptureStrategy.LONG_EXPOSURE -> mergeAndSave(frames, plan.description) { sources, report ->
+                        BurstPipeline.longExposure(sources, plan.lighten, report)
+                    }
+                    CaptureStrategy.ZOOM_DETAIL -> mergeAndSave(frames, plan.description) { sources, report ->
+                        BurstPipeline.zoomDetail(sources, report)
+                    }
                     CaptureStrategy.SINGLE -> null
                 }
             }
             _state.update { it.copy(capturing = false, processing = null, lastPhotoUri = uri ?: it.lastPhotoUri) }
             if (uri != null) {
-                val fused = plan.strategy == CaptureStrategy.NIGHT || plan.strategy == CaptureStrategy.HDR
+                val fused = plan.strategy != CaptureStrategy.BEST_OF_BURST
                 enhanceLater(uri, shot, alreadyProcessed = fused, mode = mode)
             }
         } catch (e: Throwable) {
@@ -497,21 +548,28 @@ class CameraEngine(private val context: Context) {
         return result
     }
 
-    /** Ráfaga: la foto más nítida y, si hay personas, con los ojos abiertos. Se guarda tal cual. */
+    /**
+     * Ráfaga: la foto más nítida y, si hay personas, con los ojos abiertos. En fotos de grupo, si alguien
+     * parpadeó en esa foto, se le pone su cara de otra foto de la ráfaga ("todos con los ojos abiertos").
+     */
     private fun saveBest(frames: List<CapturedFrame>): Uri? {
         val sources = frames.map { JpegFrameSource(it.jpeg) }
         try {
-            val scorer = eyeScorer
+            val faceFn = faceStates
             val beauty = aestheticScorer
+            val faces = arrayOfNulls<List<FaceDetail>>(frames.size)
             val eyes = FloatArray(frames.size)
             val aesthetic = arrayOfNulls<Float>(frames.size)
             for (i in frames.indices) {
-                if (scorer == null && beauty == null) break
+                if (faceFn == null && beauty == null) break
                 runCatching {
-                    val raw = sources[i].decodeSmall(4)
+                    // Media resolución: en fotos de grupo las caras son pequeñas.
+                    val raw = sources[i].decodeSmall(2)
                     val small = raw.rotated(frames[i].rotationDegrees)
                     try {
-                        eyes[i] = scorer?.invoke(small) ?: 0f
+                        val found = faceFn?.invoke(small)
+                        faces[i] = found
+                        if (!found.isNullOrEmpty()) eyes[i] = found.count { it.eyesOpen } / found.size.toFloat()
                         aesthetic[i] = beauty?.invoke(small)
                     } finally {
                         if (small !== raw) small.recycle()
@@ -526,9 +584,57 @@ class CameraEngine(private val context: Context) {
             val best = BurstPipeline.bestFrame(sources) { i ->
                 eyes[i] * 2f + (aesthetic[i]?.let { (it - low) / range * 0.3f } ?: 0f)
             }
+            runCatching { fixClosedEyes(frames, sources, faces, best) }.getOrNull()?.let { return it }
             return PhotoSaver.saveJpeg(context, frames[best].jpeg, frames[best].rotationDegrees)
         } finally {
             sources.forEach { it.close() }
+        }
+    }
+
+    /**
+     * Fotos de grupo: cada cara con los ojos cerrados en la foto elegida se sustituye por la misma cara
+     * de otra foto de la ráfaga en la que los tenía abiertos (la más nítida). Null si no hace falta.
+     */
+    private fun fixClosedEyes(
+        frames: List<CapturedFrame>,
+        sources: List<JpegFrameSource>,
+        faces: Array<List<FaceDetail>?>,
+        best: Int,
+    ): Uri? {
+        val baseFaces = faces[best] ?: return null
+        if (baseFaces.size < 2) return null
+        val closed = baseFaces.filter { !it.eyesOpen }
+        if (closed.isEmpty()) return null
+        val base = sources[best]
+        val w = base.width
+        val h = base.height
+        val rotation = frames[best].rotationDegrees
+        val sharpness = sources.map { ImageStats.sharpness(it.luma(4)) }
+        var px: IntArray? = null
+        var fixed = 0
+        for (face in closed) {
+            val donor = frames.indices
+                .filter { j -> j != best && faces[j]?.any { it.eyesOpen && it.box.iou(face.box) >= 0.35f } == true }
+                .maxByOrNull { sharpness[it] } ?: continue
+            val pixels = px ?: base.readRegion(0, 0, w, h).also { px = it }
+            // Zona de la cara con algo de margen (pelo, barbilla), pasada de la foto derecha al sensor.
+            val b = face.box
+            val grown = NRect(
+                b.left - b.width * 0.35f, b.top - b.height * 0.45f,
+                b.right + b.width * 0.35f, b.bottom + b.height * 0.25f,
+            ).clamped()
+            val s = FrameMath.unrotate(grown, rotation)
+            val region = PixelRect((s.left * w).toInt(), (s.top * h).toInt(), (s.right * w).toInt(), (s.bottom * h).toInt())
+            FaceMerge.paste(pixels, w, h, sources[donor], region, maxShift = maxOf(16, region.width / 5))
+            fixed++
+        }
+        val result = px ?: return null
+        val bitmap = Bitmap.createBitmap(result, w, h, Bitmap.Config.ARGB_8888)
+        return try {
+            val what = if (fixed == 1) "1 cara" else "$fixed caras"
+            PhotoSaver.saveProcessed(context, bitmap, rotation, frames[best].jpeg, "Todos con los ojos abiertos ($what)")
+        } finally {
+            bitmap.recycle()
         }
     }
 
@@ -666,31 +772,50 @@ class CameraEngine(private val context: Context) {
         val capture = imageCapture ?: return
         if (_state.value.capturing) return
         val mode = _state.value.mode
+        val raw = _state.value.rawActive
+        val token = ++shotToken
         _state.update { it.copy(capturing = true) }
 
         val name = "IA_" + SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(System.currentTimeMillis())
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, PHOTO_DIR)
-        }
-        val options = ImageCapture.OutputFileOptions.Builder(
+        fun options(fileName: String, mime: String) = ImageCapture.OutputFileOptions.Builder(
             context.contentResolver,
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            values,
+            ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, PHOTO_DIR)
+            },
         ).build()
-
-        capture.takePicture(options, mainExecutor, object : ImageCapture.OnImageSavedCallback {
+        val jpegOptions = options(name, "image/jpeg")
+        var pending = if (raw) 2 else 1
+        val callback = object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                _state.update { it.copy(capturing = false, lastPhotoUri = output.savedUri ?: it.lastPhotoUri) }
-                output.savedUri?.let { enhanceLater(it, shot, alreadyProcessed = false, mode = mode) }
+                pending--
+                val isRaw = raw && output.imageFormat == ImageFormat.RAW_SENSOR
+                if (!isRaw) {
+                    _state.update { it.copy(lastPhotoUri = output.savedUri ?: it.lastPhotoUri) }
+                    output.savedUri?.let { enhanceLater(it, shot, alreadyProcessed = false, mode = mode) }
+                }
+                if (pending <= 0 && token == shotToken) _state.update { it.copy(capturing = false) }
             }
 
             override fun onError(exception: ImageCaptureException) {
                 _state.update { it.copy(capturing = false, message = "No se pudo guardar la foto: ${exception.message}") }
             }
-        })
+        }
+        if (raw) {
+            capture.takePicture(options(name + "_raw", "image/x-adobe-dng"), jpegOptions, mainExecutor, callback)
+            // Por si el sistema solo avisa de una de las dos fotos: el disparador no se queda bloqueado.
+            scope.launch {
+                delay(RAW_RELEASE_MS)
+                if (token == shotToken) _state.update { it.copy(capturing = false) }
+            }
+        } else {
+            capture.takePicture(jpegOptions, mainExecutor, callback)
+        }
     }
+
+    private var shotToken = 0
 
     /** Busca la última foto hecha con la app para mostrarla en la miniatura. */
     suspend fun refreshLastPhoto() {
@@ -719,5 +844,8 @@ class CameraEngine(private val context: Context) {
 
         /** Tiempo para que la exposición se asiente entre fotos del horquillado. */
         private const val BRACKET_SETTLE_MS = 300L
+
+        /** Tiempo máximo que el disparador espera a que se guarden el RAW y el JPEG. */
+        private const val RAW_RELEASE_MS = 6000L
     }
 }

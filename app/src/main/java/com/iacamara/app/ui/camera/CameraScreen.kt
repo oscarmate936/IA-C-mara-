@@ -168,7 +168,7 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
 
     LaunchedEffect(Unit) {
         engine.setAnalyzer(analyzer)
-        engine.eyeScorer = { bitmap -> analyzer.eyesOpenScore(bitmap) }
+        engine.faceStates = { bitmap -> analyzer.faceStates(bitmap) }
         engine.aestheticScorer = { bitmap -> analyzer.aestheticScore(bitmap) }
         engine.enhancer.faceFinder = { bitmap -> analyzer.findFaces(bitmap) }
         engine.enhancer.aestheticScorer = { bitmap -> analyzer.aestheticScore(bitmap) }
@@ -290,6 +290,8 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
                     perception = perception,
                     iaEnabled = iaEnabled,
                     flashOn = currentState.flash == FlashSetting.ON,
+                    zoomRatio = currentState.zoomRatio,
+                    hasOpticalTele = currentState.hasOpticalTele,
                 ),
                 shot,
             )
@@ -586,9 +588,13 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
                         state.captureMegapixels?.let { mp -> InfoChip(String.format(Locale.US, "%.0f MP", mp)) }
                         if (state.mode != PhotoMode.FOTO) InfoChip(state.mode.label)
                         if (smartShutter && iaEnabled) InfoChip("AUTO-DISPARO")
-                        val plan = CaptureDirector.plan(state.mode, perception, iaEnabled, state.flash == FlashSetting.ON)
+                        val plan = CaptureDirector.plan(
+                            state.mode, perception, iaEnabled, state.flash == FlashSetting.ON,
+                            state.zoomRatio, state.hasOpticalTele,
+                        )
                         if (plan.strategy != CaptureStrategy.SINGLE && state.processing == null) InfoChip(plan.description)
                         if (state.enhancing > 0) InfoChip("✨ Mejorando…")
+                        if (state.rawActive) InfoChip("RAW + JPEG")
                     }
                     if (iaActive && currentPerception != null) {
                         SceneBadge(perception = currentPerception, reason = direction?.reason)

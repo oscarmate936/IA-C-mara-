@@ -43,6 +43,11 @@ class AppPrefs(context: Context) {
         get() = sp.getBoolean(KEY_ENHANCE_GEOMETRY, true)
         set(value) = sp.edit().putBoolean(KEY_ENHANCE_GEOMETRY, value).apply()
 
+    /** En el modo PRO, guardar también el RAW (DNG) si el móvil lo permite. */
+    var raw: Boolean
+        get() = sp.getBoolean(KEY_RAW, false)
+        set(value) = sp.edit().putBoolean(KEY_RAW, value).apply()
+
     private companion object {
         const val KEY_GRID = "rejilla"
         const val KEY_LEVEL = "nivel"
@@ -52,6 +57,7 @@ class AppPrefs(context: Context) {
         const val KEY_GUIDE = "guia"
         const val KEY_ENHANCE = "mejora"
         const val KEY_ENHANCE_GEOMETRY = "mejora_geometria"
+        const val KEY_RAW = "raw"
     }
 }
 
