@@ -21,12 +21,31 @@ class ImagingTest {
     private val w = 320
     private val h = 240
 
-    /** Escena sintética con textura (para que se pueda alinear). */
-    private fun scene(): IntArray = IntArray(w * h) { i ->
-        val x = i % w
-        val y = i / w
-        val v = (128 + 60 * sin(x / 7.0) * sin(y / 9.0) + 40 * sin((x + y) / 23.0)).toInt()
-        argb(v, (v * 0.8).toInt(), (v * 0.6).toInt())
+    /**
+     * Escena sintética que no se repite, como una foto real: ruido aleatorio suavizado
+     * (textura) sobre un degradado suave (zonas claras y oscuras para el HDR).
+     * Un patrón periódico no sirve: varios desplazamientos encajan igual de bien.
+     */
+    private fun scene(): IntArray {
+        val r = Random(5)
+        val noise = FloatArray(w * h) { r.nextFloat() * 255f }
+        return IntArray(w * h) { i ->
+            val x = i % w
+            val y = i / w
+            var s = 0f
+            var n = 0
+            for (j in -2..2) for (k in -2..2) {
+                val xx = x + k
+                val yy = y + j
+                if (xx in 0 until w && yy in 0 until h) {
+                    s += noise[yy * w + xx]
+                    n++
+                }
+            }
+            val gradient = 70.0 * (x - w / 2) / w + 30 * sin(y / 40.0)
+            val v = ((s / n - 128) * 3 + 128 + gradient).toInt()
+            argb(v, (v * 0.85).toInt(), (v * 0.7).toInt())
+        }
     }
 
     private fun shifted(src: IntArray, dx: Int, dy: Int): IntArray = IntArray(w * h) { i ->
