@@ -28,11 +28,17 @@ class AppPrefs(context: Context) {
         get() = sp.getBoolean(KEY_SMART_SHUTTER, false)
         set(value) = sp.edit().putBoolean(KEY_SMART_SHUTTER, value).apply()
 
+    /** Guía de composición fija elegida por el usuario, o null si la elige la IA. */
+    var guide: String?
+        get() = sp.getString(KEY_GUIDE, null)
+        set(value) = sp.edit().putString(KEY_GUIDE, value).apply()
+
     private companion object {
         const val KEY_GRID = "rejilla"
         const val KEY_LEVEL = "nivel"
         const val KEY_IA = "ia"
         const val KEY_HISTOGRAM = "histograma"
         const val KEY_SMART_SHUTTER = "disparo_inteligente"
+        const val KEY_GUIDE = "guia"
     }
 }

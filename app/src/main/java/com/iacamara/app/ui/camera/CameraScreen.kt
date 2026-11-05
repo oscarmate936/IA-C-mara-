@@ -89,6 +89,8 @@ import androidx.compose.material.icons.filled.CameraEnhance
 import androidx.compose.runtime.mutableFloatStateOf
 import com.iacamara.app.composition.CompositionEngine
 import com.iacamara.app.composition.CompositionInput
+import com.iacamara.app.composition.GuideStyle
+import com.iacamara.app.composition.GuideStyleStabilizer
 import com.iacamara.app.composition.Guidance
 import com.iacamara.app.director.Tip
 import com.iacamara.app.director.CaptureDirector
@@ -137,6 +139,11 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
     val auto = remember { AutoFocusState() }
     var direction by remember { mutableStateOf<Direction?>(null) }
     var guidance by remember { mutableStateOf<Guidance?>(null) }
+    // Guía de composición fija elegida por el usuario (null = la elige la IA según la escena).
+    var forcedGuide by remember {
+        mutableStateOf(prefs.guide?.let { name -> GuideStyle.entries.firstOrNull { it.name == name } })
+    }
+    val guideStabilizer = remember { GuideStyleStabilizer() }
     var smartShutter by remember { mutableStateOf(prefs.smartShutter) }
     var autoProgress by remember { mutableFloatStateOf(0f) }
     val smart = remember { SmartShutterState() }
@@ -287,26 +294,28 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
             val level = levelState.value
             val mainFace = p.subject?.let { subject -> p.faceDetails.maxByOrNull { it.box.iou(subject.box) } }
                 ?: p.faceDetails.firstOrNull()
-            val g = CompositionEngine.evaluate(
-                CompositionInput(
-                    scene = p.scene,
-                    subjectKind = p.subject?.kind,
-                    subjectBox = p.subject?.box,
-                    faces = p.faces,
-                    // La mirada se mide sin espejo; el usuario ve la frontal en espejo.
-                    gazeX = mainFace?.gazeX?.let { if (front) -it else it },
-                    saliency = p.saliency,
-                    rollDegrees = level?.takeIf { !it.isFlat }?.deviationDegrees,
-                    horizonY = p.light?.horizonY,
-                    interestingSky = (p.light?.skyBlue ?: 0f) >= 0.25f || (p.light?.warmTop ?: 0f) >= 0.2f,
-                    highlightClip = p.light?.highlightClip ?: 0f,
-                    shadowClip = p.light?.shadowClip ?: 0f,
-                    blurRisk = Condition.TEMBLOR in p.conditions,
-                    front = front,
-                    deviceDegrees = deviceDegrees,
-                    namedObjects = p.namedObjects,
-                ),
+            val compositionInput = CompositionInput(
+                scene = p.scene,
+                subjectKind = p.subject?.kind,
+                subjectBox = p.subject?.box,
+                faces = p.faces,
+                // La mirada se mide sin espejo; el usuario ve la frontal en espejo.
+                gazeX = mainFace?.gazeX?.let { if (front) -it else it },
+                saliency = p.saliency,
+                rollDegrees = level?.takeIf { !it.isFlat }?.deviationDegrees,
+                horizonY = p.light?.horizonY,
+                interestingSky = (p.light?.skyBlue ?: 0f) >= 0.25f || (p.light?.warmTop ?: 0f) >= 0.2f,
+                highlightClip = p.light?.highlightClip ?: 0f,
+                shadowClip = p.light?.shadowClip ?: 0f,
+                blurRisk = Condition.TEMBLOR in p.conditions,
+                front = front,
+                deviceDegrees = deviceDegrees,
+                namedObjects = p.namedObjects,
+                structure = p.structure,
             )
+            // La guía automática solo cambia si la escena la pide varias veces seguidas (sin parpadeos).
+            val style = forcedGuide ?: guideStabilizer.update(CompositionEngine.chooseStyle(compositionInput))
+            val g = CompositionEngine.evaluate(compositionInput.copy(style = style))
             guidance = g
             engine.rememberAutoExposure()
 
@@ -488,18 +497,32 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                     },
             )
 
-            if (showGrid) GridOverlay()
-            if (showLevel) LevelOverlay(levelState)
             val currentPerception = perception
+            val coachActive = iaEnabled && state.analysisActive && currentPerception != null && guidance != null
+            // Con la IA activa, la rejilla es la guía que elige la IA (o la que fijes); sin IA, tercios.
+            if (showGrid && !coachActive) GridOverlay()
+            if (showLevel) LevelOverlay(levelState)
             if (iaEnabled && state.analysisActive && currentPerception != null) {
                 SubjectOverlay(currentPerception, front = state.lens == Lens.FRONT)
                 guidance?.let { g ->
-                    CompositionOverlay(g, front = state.lens == Lens.FRONT)
+                    CompositionOverlay(g, front = state.lens == Lens.FRONT, showGuide = showGrid)
                     ScoreBadge(
                         score = g.score,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .padding(10.dp),
+                    )
+                    GuideChip(
+                        style = g.style,
+                        forced = forcedGuide,
+                        onSelect = { choice ->
+                            forcedGuide = choice
+                            prefs.guide = choice?.name
+                            guideStabilizer.reset()
+                        },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 64.dp, end = 10.dp),
                     )
                 }
                 SceneBadge(
@@ -539,7 +562,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                         timings = currentPerception.timings,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(top = 66.dp, end = 10.dp),
+                            .padding(top = 100.dp, end = 10.dp),
                     )
                 }
             }

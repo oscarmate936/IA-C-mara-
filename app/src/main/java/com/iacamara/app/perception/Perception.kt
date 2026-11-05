@@ -140,4 +140,6 @@ data class Perception(
     val namedObjects: List<DetectedObject> = emptyList(),
     /** Milisegundos medios de cada modelo en este móvil (para ver el rendimiento). */
     val timings: Map<String, Int> = emptyMap(),
+    /** Líneas guía, punto de fuga, simetría y reflejos de la escena. */
+    val structure: SceneStructure? = null,
 )

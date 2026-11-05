@@ -34,6 +34,8 @@ import kotlin.math.hypot
  * - Vocabulario abierto (YOLOE con ~120 cosas habituales en fotos): ~1 vez por segundo; da nombre
  *   a lo que YOLO11 no conoce y anula sus confusiones.
  * - Saliencia (U²-Net): ~1–2 veces por segundo; encuentra "lo importante" aunque no tenga nombre.
+ * - Estructura (sin modelo): ~3 veces por segundo; líneas guía, punto de fuga, simetría y reflejos
+ *   para elegir la guía de composición.
  *
  * Cada modelo se espacia solo según lo que tarda en este móvil y si se calienta, y en cada fotograma
  * se ejecuta como mucho un modelo pesado, para que el visor vaya fluido.
@@ -75,12 +77,14 @@ class PerceptionAnalyzer(
     private val sceneStabilizer = SceneStabilizer()
     private val conditionStabilizer = ConditionStabilizer()
     private val objectTracker = ObjectTracker()
+    private val structureStabilizer = StructureStabilizer()
 
     private val labelsClock = TaskClock(450, 3f)
     private val landmarksClock = TaskClock(250, 3f)
     private val yoloClock = TaskClock(180, 2.5f)
     private val yoloeClock = TaskClock(900, 4f)
     private val saliencyClock = TaskClock(600, 4f)
+    private val structureClock = TaskClock(330, 4f)
 
     private var lastFront = false
     private var lastDegrees = 0
@@ -100,6 +104,8 @@ class PerceptionAnalyzer(
     private var lastSubjectCenter: Pair<Float, Float>? = null
     private var lastSubjectMs = 0L
     private var subjectSpeed = 0f
+    private var lastStructure: SceneStructure? = null
+    private var structurePixels = IntArray(0)
 
     private fun ensureModels() {
         if (initialized) return
@@ -204,7 +210,9 @@ class PerceptionAnalyzer(
         lastOpenVocab = emptyList()
         lastSaliencyGrid = null
         lastFaceDetails = emptyList()
-        listOf(yoloClock, yoloeClock, saliencyClock, landmarksClock).forEach { it.reset() }
+        structureStabilizer.clear()
+        lastStructure = null
+        listOf(yoloClock, yoloeClock, saliencyClock, landmarksClock, structureClock).forEach { it.reset() }
     }
 
     private fun process(bitmap: Bitmap, modelRotation: Int, front: Boolean, now: Long) {
@@ -248,6 +256,9 @@ class PerceptionAnalyzer(
         }
 
         val subjectInModel = chooseSubject(faces, lastObjects, salientModel)
+        if (structureClock.overdue(now, slowdown) >= 1f) {
+            timed(structureClock, now) { runStructure(bitmap, subjectInModel?.box) }
+        }
         val light = lightAnalyzer.analyze(bitmap, subjectInModel?.box)
         val meta = captureMetadata.current()
 
@@ -289,7 +300,9 @@ class PerceptionAnalyzer(
                 "YOLOE" to yoloeClock.averageMs.toInt(),
                 "Saliencia" to saliencyClock.averageMs.toInt(),
                 "Ojos" to landmarksClock.averageMs.toInt(),
+                "Líneas" to structureClock.averageMs.toInt(),
             ),
+            structure = lastStructure?.map { x, y -> FrameMath.unrotate(x, y, modelRotation) },
         )
     }
 
@@ -359,6 +372,19 @@ class PerceptionAnalyzer(
         lastSaliencyGrid = detector.saliency(bitmap, gw, gh)
         lastSaliencyW = gw
         lastSaliencyH = gh
+    }
+
+    /** Líneas guía, punto de fuga y simetría sobre una copia pequeña (≈160 px) del fotograma. */
+    private fun runStructure(bitmap: Bitmap, subject: NRect?) {
+        val scale = STRUCTURE_SIZE / maxOf(bitmap.width, bitmap.height).toFloat()
+        val sw = (bitmap.width * scale).toInt().coerceAtLeast(16)
+        val sh = (bitmap.height * scale).toInt().coerceAtLeast(16)
+        val small = Bitmap.createScaledBitmap(bitmap, sw, sh, true)
+        if (structurePixels.size != sw * sh) structurePixels = IntArray(sw * sh)
+        small.getPixels(structurePixels, 0, sw, 0, 0, sw, sh)
+        if (small !== bitmap) small.recycle()
+        val reading = StructureAnalyzer.analyze(structurePixels, sw, sh, subject)
+        lastStructure = structureStabilizer.update(reading)
     }
 
     private fun chooseSubject(
@@ -483,6 +509,7 @@ class PerceptionAnalyzer(
         private const val IMAGENET_LAST_ANIMAL = 398
         private const val EYE_CLOSED = 0.5f
         private const val OPEN_VOCAB_MIN = 0.25f
+        private const val STRUCTURE_SIZE = 160f
 
         /** Nombres del vocabulario abierto que sí son animales (no vetan a un animal de YOLO11). */
         private val OPEN_VOCAB_ANIMALS = setOf(

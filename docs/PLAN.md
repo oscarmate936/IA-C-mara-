@@ -385,6 +385,22 @@ data class Decision(
 - **Líneas guía detectadas**, resaltadas para que las uses como camino hacia el sujeto.
 - **Caja del sujeto** y **posición objetivo**: un hueco fantasma que muestra dónde debería quedar el sujeto.
 
+**Cómo elige la IA la guía** (se puede fijar otra tocando su nombre en el visor):
+
+| Lo que ve | Guía |
+|---|---|
+| Líneas que se juntan dentro de la foto (camino, vías, pasillo) | Líneas guía, con el punto de fuga al centro o en un tercio |
+| Escena simétrica o reflejo en el agua (sin sujeto, o con el sujeto en el eje) | Simetría: el eje o la línea del agua al centro |
+| Líneas que llevan hasta el sujeto | Líneas guía |
+| Sujeto grande, primer plano o selfie | Centro |
+| Sujeto pequeño con mucho espacio libre alrededor | Espiral áurea, con el sujeto en su ojo |
+| Sujeto mediano | Proporción áurea (1 : 1,618) |
+| Lo demás | Tercios |
+
+Las líneas, el punto de fuga, la simetría y los reflejos se detectan sin modelos (bordes de color →
+transformada de Hough; comparación de cada mitad con la otra reflejada), unas 3 veces por segundo y en
+pocos milisegundos. La guía automática solo cambia cuando la escena la pide varias veces seguidas.
+
 ### 9.2 Puntuación de encuadre (0–100)
 
 ```
