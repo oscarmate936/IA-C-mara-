@@ -19,7 +19,7 @@ android {
         minSdk = 34
         targetSdk = 36
         versionCode = buildNumber
-        versionName = "0.3.$buildNumber"
+        versionName = "0.4.$buildNumber"
         ndk {
             // Solo procesadores de 64 bits (S22+ y Magic 8 Lite): APK más pequeño.
             abiFilters += listOf("arm64-v8a")
@@ -117,6 +117,7 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
     implementation(libs.androidx.camera.extensions)
+    implementation(libs.androidx.exifinterface)
 
     // IA en el móvil (modelos dentro del APK, sin internet).
     implementation(libs.mediapipe.tasks.vision)

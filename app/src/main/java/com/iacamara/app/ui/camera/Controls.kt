@@ -7,6 +7,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -121,7 +122,13 @@ private fun zoomLabel(value: Float, withX: Boolean): String {
 
 @Composable
 fun ModeSelector(modes: List<PhotoMode>, selected: PhotoMode, onSelect: (PhotoMode) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .horizontalScroll(androidx.compose.foundation.rememberScrollState())
+            .padding(horizontal = 12.dp),
+    ) {
         modes.forEach { mode ->
             val isSelected = mode == selected
             Text(

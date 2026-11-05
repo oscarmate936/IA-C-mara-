@@ -10,7 +10,12 @@ import android.net.Uri
 import android.provider.MediaStore
 import android.util.Size
 import android.view.Surface
+import android.graphics.Bitmap
+import android.hardware.camera2.CaptureRequest
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.core.Camera
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.CameraSelector
@@ -27,9 +32,22 @@ import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import com.iacamara.app.capture.CapturedFrame
+import com.iacamara.app.capture.JpegFrameSource
+import com.iacamara.app.capture.PhotoSaver
+import com.iacamara.app.capture.captureJpeg
+import com.iacamara.app.capture.rotated
+import com.iacamara.app.director.CapturePlan
+import com.iacamara.app.director.CaptureStrategy
+import com.iacamara.app.imaging.BurstPipeline
 import com.iacamara.app.perception.CaptureMetadata
 import com.iacamara.app.util.await
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,18 +64,37 @@ import kotlin.math.sqrt
 enum class Lens { BACK, FRONT }
 
 /**
- * Modos de foto. Los modos distintos de FOTO usan las extensiones del fabricante
- * (procesado propio de Samsung/Honor) cuando el móvil las ofrece a otras apps.
+ * Modos de foto.
+ * - Propios de la app (vendor = false): FOTO, NOCHE y HDR con la fotografía computacional de la app, y PRO.
+ * - Del fabricante (vendor = true): usan las extensiones de Samsung/Honor cuando el móvil las ofrece.
  */
-enum class PhotoMode(val label: String, val extensionMode: Int) {
-    FOTO("FOTO", ExtensionMode.NONE),
+enum class PhotoMode(val label: String, val extensionMode: Int, val vendor: Boolean) {
+    FOTO("FOTO", ExtensionMode.NONE, false),
+
+    /** Noche propia: ráfaga alineada y apilada (Fase 4). */
+    NOCHE_IA("NOCHE", ExtensionMode.NONE, false),
+
+    /** HDR propio: horquillado de exposiciones fusionado (Fase 4). */
+    HDR_IA("HDR", ExtensionMode.NONE, false),
 
     /** Procesado automático del fabricante (en el S22+, el de Samsung). */
-    AUTO("AUTO", ExtensionMode.AUTO),
-    NOCHE("NOCHE", ExtensionMode.NIGHT),
-    HDR("HDR", ExtensionMode.HDR),
-    RETRATO("RETRATO", ExtensionMode.BOKEH),
+    AUTO("AUTO", ExtensionMode.AUTO, true),
+    RETRATO("RETRATO", ExtensionMode.BOKEH, true),
+    NOCHE("NOCHE+", ExtensionMode.NIGHT, true),
+    HDR("HDR+", ExtensionMode.HDR, true),
+
+    /** Manual: ISO y velocidad de obturación elegidas por el usuario. */
+    PRO("PRO", ExtensionMode.NONE, false),
 }
+
+/** Límites del sensor para el modo PRO. */
+data class ProRanges(val isoMin: Int, val isoMax: Int, val exposureMinNs: Long, val exposureMaxNs: Long)
+
+/** Ajustes manuales del modo PRO y la exposición que había elegido la IA al entrar (para comparar). */
+data class ProSettings(val iso: Int, val exposureNs: Long, val aperture: Float, val referenceEv: Float?)
+
+/** Estado de una foto computacional en curso. */
+data class Processing(val label: String, val progress: Float, val capturingFrames: Boolean)
 
 enum class FlashSetting(val cameraXMode: Int) {
     OFF(ImageCapture.FLASH_MODE_OFF),
@@ -91,6 +128,10 @@ data class CameraUiState(
     val hasOpticalTele: Boolean = false,
     /** Aumenta cada vez que se vuelve a abrir la cámara (los ajustes automáticos se reinician). */
     val bindGeneration: Int = 0,
+    /** Foto computacional en curso (ráfaga, noche, HDR) o null. */
+    val processing: Processing? = null,
+    val proRanges: ProRanges? = null,
+    val pro: ProSettings? = null,
 )
 
 /**
@@ -114,6 +155,15 @@ class CameraEngine(private val context: Context) {
 
     /** Lecturas del sensor (ISO, exposición, enfoque) del visor, para la IA. */
     val captureMetadata = CaptureMetadata()
+
+    /** Corrutinas de la captura computacional (se cancelan al cerrar la cámara). */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /**
+     * Puntúa los ojos abiertos en una foto reducida y derecha: fracción de caras con los ojos abiertos,
+     * o null si no hay caras. Lo proporciona la percepción (Face Landmarker).
+     */
+    var eyeScorer: ((Bitmap) -> Float?)? = null
     private var analyzer: ImageAnalysis.Analyzer? = null
     private val analysisExecutor = Executors.newSingleThreadExecutor()
 
@@ -150,6 +200,7 @@ class CameraEngine(private val context: Context) {
     /** Libera el hilo de análisis; el motor ya no se puede volver a usar. */
     fun release() {
         stop()
+        scope.cancel()
         analysisExecutor.shutdown()
     }
 
@@ -157,11 +208,10 @@ class CameraEngine(private val context: Context) {
         if (lens == Lens.FRONT) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
 
     private fun availableModes(lens: Lens): List<PhotoMode> {
-        val ext = extensions ?: return listOf(PhotoMode.FOTO)
+        val ext = extensions ?: return PhotoMode.entries.filter { !it.vendor }
         val base = baseSelector(lens)
         return PhotoMode.entries.filter { mode ->
-            mode == PhotoMode.FOTO ||
-                runCatching { ext.isExtensionAvailable(base, mode.extensionMode) }.getOrDefault(false)
+            !mode.vendor || runCatching { ext.isExtensionAvailable(base, mode.extensionMode) }.getOrDefault(false)
         }
     }
 
@@ -194,14 +244,14 @@ class CameraEngine(private val context: Context) {
         val mode = if (current.mode in modes) current.mode else PhotoMode.FOTO
         val base = baseSelector(current.lens)
         val ext = extensions
-        val selector = if (mode == PhotoMode.FOTO || ext == null) {
+        val selector = if (!mode.vendor || ext == null) {
             base
         } else {
             ext.getExtensionEnabledCameraSelector(base, mode.extensionMode)
         }
 
         val previewBuilder = Preview.Builder().setResolutionSelector(previewResolution())
-        if (mode == PhotoMode.FOTO) {
+        if (!mode.vendor) {
             // Lee ISO, exposición y distancia de enfoque de cada fotograma (la IA las usa para la luz).
             Camera2Interop.Extender(previewBuilder).setSessionCaptureCallback(captureMetadata.callback)
         }
@@ -210,7 +260,7 @@ class CameraEngine(private val context: Context) {
         captureMetadata.clear()
 
         val capture = buildCapture(current.flash)
-        val analysisAllowed = mode == PhotoMode.FOTO || ext == null ||
+        val analysisAllowed = !mode.vendor || ext == null ||
             runCatching { ext.isImageAnalysisSupported(base, mode.extensionMode) }.getOrDefault(false)
         val analysis = analyzer?.takeIf { analysisAllowed }?.let { buildAnalysis(it) }
 
@@ -243,11 +293,17 @@ class CameraEngine(private val context: Context) {
         val exposure = boundCamera.cameraInfo.exposureState
         val step = exposure.exposureCompensationStep.toFloat()
         val evSupported = exposure.isExposureCompensationSupported && step > 0f
+        val proRanges = if (mode == PhotoMode.PRO) readProRanges(boundCamera) else null
+        if (mode != PhotoMode.PRO) {
+            runCatching { Camera2CameraControl.from(boundCamera.cameraControl).clearCaptureRequestOptions() }
+        }
         _state.update {
             it.copy(
                 ready = true,
                 mode = mode,
                 availableModes = modes,
+                proRanges = proRanges,
+                pro = if (mode == PhotoMode.PRO) it.pro else null,
                 hasFlash = boundCamera.cameraInfo.hasFlashUnit(),
                 captureMegapixels = size?.let { s -> s.width * s.height / 1_000_000f },
                 analysisActive = analysisActive,
@@ -256,6 +312,173 @@ class CameraEngine(private val context: Context) {
                 maxEv = if (evSupported) exposure.exposureCompensationRange.upper * step else 0f,
                 bindGeneration = it.bindGeneration + 1,
             )
+        }
+        if (mode == PhotoMode.PRO && proRanges != null) startPro(proRanges)
+    }
+
+    // --- Modo PRO ---
+
+    private fun readProRanges(cam: Camera): ProRanges? = runCatching {
+        val info = Camera2CameraInfo.from(cam.cameraInfo)
+        val iso = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE) ?: return@runCatching null
+        val exposure = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+            ?: return@runCatching null
+        ProRanges(iso.lower, iso.upper, exposure.lower, exposure.upper)
+    }.getOrNull()
+
+    /** Al entrar en PRO se parte de la exposición que estaba usando la IA. */
+    private fun startPro(ranges: ProRanges) {
+        val meta = lastAutoMeta
+        val iso = (meta?.iso ?: 100).coerceIn(ranges.isoMin, ranges.isoMax)
+        val exposure = (meta?.exposureNs ?: 16_666_666L).coerceIn(ranges.exposureMinNs, ranges.exposureMaxNs)
+        val settings = ProSettings(iso, exposure, meta?.aperture ?: 1.8f, meta?.ev100)
+        _state.update { it.copy(pro = settings) }
+        applyPro(settings)
+    }
+
+    fun setProExposure(iso: Int, exposureNs: Long) {
+        val current = _state.value.pro ?: return
+        val ranges = _state.value.proRanges ?: return
+        val settings = current.copy(
+            iso = iso.coerceIn(ranges.isoMin, ranges.isoMax),
+            exposureNs = exposureNs.coerceIn(ranges.exposureMinNs, ranges.exposureMaxNs),
+        )
+        _state.update { it.copy(pro = settings) }
+        applyPro(settings)
+    }
+
+    private fun applyPro(settings: ProSettings) {
+        val cam = camera ?: return
+        val options = CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, settings.iso)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, settings.exposureNs)
+            .build()
+        runCatching { Camera2CameraControl.from(cam.cameraControl).setCaptureRequestOptions(options) }
+    }
+
+    /** Última exposición automática medida (para empezar el modo PRO desde ahí). */
+    private var lastAutoMeta: com.iacamara.app.perception.CaptureMeta? = null
+
+    fun rememberAutoExposure() {
+        if (_state.value.mode != PhotoMode.PRO) captureMetadata.current()?.let { lastAutoMeta = it }
+    }
+
+    // --- Fotografía computacional (Fase 4) ---
+
+    /** Dispara con la técnica que ha decidido el Director IA. */
+    fun capture(plan: CapturePlan) {
+        if (plan.strategy == CaptureStrategy.SINGLE) {
+            takePhoto()
+            return
+        }
+        if (_state.value.capturing) return
+        scope.launch { runComputational(plan) }
+    }
+
+    private suspend fun runComputational(plan: CapturePlan) {
+        val capture = imageCapture ?: return
+        _state.update { it.copy(capturing = true, processing = Processing(plan.description, 0f, capturingFrames = true)) }
+        try {
+            val frames = mutableListOf<CapturedFrame>()
+            var evs = FloatArray(0)
+            when (plan.strategy) {
+                CaptureStrategy.HDR -> {
+                    val bracket = captureBracket(capture)
+                    bracket.forEach { frames += it.first }
+                    evs = FloatArray(bracket.size) { bracket[it].second }
+                }
+                else -> repeat(plan.frames) {
+                    frames += capture.captureJpeg(mainExecutor)
+                    updateProgress((it + 1f) / plan.frames * 0.3f, capturingFrames = true)
+                }
+            }
+            updateProgress(0.3f, capturingFrames = false)
+            val uri = withContext(Dispatchers.Default) {
+                when (plan.strategy) {
+                    CaptureStrategy.BEST_OF_BURST -> saveBest(frames)
+                    CaptureStrategy.NIGHT -> mergeAndSave(frames, plan.description) { sources, report ->
+                        BurstPipeline.night(sources, report)
+                    }
+                    CaptureStrategy.HDR -> mergeAndSave(frames, plan.description) { sources, report ->
+                        BurstPipeline.hdr(sources, evs, report)
+                    }
+                    CaptureStrategy.SINGLE -> null
+                }
+            }
+            _state.update { it.copy(capturing = false, processing = null, lastPhotoUri = uri ?: it.lastPhotoUri) }
+        } catch (e: Throwable) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            _state.update { it.copy(capturing = false, processing = null, message = "No se pudo procesar la foto: ${e.message}") }
+        }
+    }
+
+    private fun updateProgress(progress: Float, capturingFrames: Boolean) {
+        _state.update { s -> s.copy(processing = s.processing?.copy(progress = progress, capturingFrames = capturingFrames)) }
+    }
+
+    /** Horquillado: −2, 0 y +2 EV (o lo que permita la cámara). Devuelve cada foto con su EV real. */
+    private suspend fun captureBracket(capture: ImageCapture): List<Pair<CapturedFrame, Float>> {
+        val cam = camera ?: error("cámara cerrada")
+        val exposure = cam.cameraInfo.exposureState
+        val step = exposure.exposureCompensationStep.toFloat()
+        if (!exposure.isExposureCompensationSupported || step <= 0f) {
+            return listOf(capture.captureJpeg(mainExecutor) to 0f)
+        }
+        val original = exposure.exposureCompensationIndex
+        val range = exposure.exposureCompensationRange
+        val result = mutableListOf<Pair<CapturedFrame, Float>>()
+        try {
+            for ((i, ev) in listOf(-2f, 0f, 2f).withIndex()) {
+                val index = (ev / step).roundToInt().coerceIn(range.lower, range.upper)
+                runCatching { cam.cameraControl.setExposureCompensationIndex(index).await() }
+                delay(BRACKET_SETTLE_MS)
+                result += capture.captureJpeg(mainExecutor) to index * step
+                updateProgress((i + 1) / 3f * 0.3f, capturingFrames = true)
+            }
+        } finally {
+            runCatching { cam.cameraControl.setExposureCompensationIndex(original) }
+        }
+        return result
+    }
+
+    /** Ráfaga: la foto más nítida y, si hay personas, con los ojos abiertos. Se guarda tal cual. */
+    private fun saveBest(frames: List<CapturedFrame>): Uri? {
+        val sources = frames.map { JpegFrameSource(it.jpeg) }
+        try {
+            val scorer = eyeScorer
+            val eyes = frames.indices.map { i ->
+                if (scorer == null) {
+                    null
+                } else {
+                    runCatching {
+                        val small = sources[i].decodeSmall(4).rotated(frames[i].rotationDegrees)
+                        scorer(small)
+                    }.getOrNull()
+                }
+            }
+            val best = BurstPipeline.bestFrame(sources) { i -> (eyes[i] ?: 0f) * 2f }
+            return PhotoSaver.saveJpeg(context, frames[best].jpeg)
+        } finally {
+            sources.forEach { it.close() }
+        }
+    }
+
+    private fun mergeAndSave(
+        frames: List<CapturedFrame>,
+        description: String,
+        merge: (List<JpegFrameSource>, (Float) -> Unit) -> BurstPipeline.Merged,
+    ): Uri? {
+        val sources = frames.map { JpegFrameSource(it.jpeg) }
+        try {
+            val merged = merge(sources) { p -> updateProgress(0.3f + 0.6f * p, capturingFrames = false) }
+            val bitmap = Bitmap.createBitmap(merged.pixels, merged.width, merged.height, Bitmap.Config.ARGB_8888)
+            val reference = frames[merged.reference]
+            val uri = PhotoSaver.saveProcessed(context, bitmap, reference.rotationDegrees, reference.jpeg, description)
+            bitmap.recycle()
+            return uri
+        } finally {
+            sources.forEach { it.close() }
         }
     }
 
@@ -423,5 +646,8 @@ class CameraEngine(private val context: Context) {
         private const val JPEG_QUALITY = 95
         private const val FOCUS_HOLD_SECONDS = 4L
         private const val EXTENSIONS_TIMEOUT_MS = 4000L
+
+        /** Tiempo para que la exposición se asiente entre fotos del horquillado. */
+        private const val BRACKET_SETTLE_MS = 300L
     }
 }

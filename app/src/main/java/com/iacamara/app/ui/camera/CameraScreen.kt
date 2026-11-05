@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -90,6 +91,9 @@ import com.iacamara.app.composition.CompositionEngine
 import com.iacamara.app.composition.CompositionInput
 import com.iacamara.app.composition.Guidance
 import com.iacamara.app.director.Tip
+import com.iacamara.app.director.CaptureDirector
+import com.iacamara.app.director.CaptureStrategy
+import com.iacamara.app.camera.Processing
 import com.iacamara.app.perception.Condition
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BarChart
@@ -147,6 +151,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
 
     LaunchedEffect(Unit) {
         engine.setAnalyzer(analyzer)
+        engine.eyeScorer = { bitmap -> analyzer.eyesOpenScore(bitmap) }
         engine.start(lifecycleOwner, previewView.surfaceProvider)
     }
     DisposableEffect(Unit) {
@@ -231,7 +236,15 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 flashAlpha.snapTo(0.8f)
                 flashAlpha.animateTo(0f, tween(300))
             }
-            engine.takePhoto()
+            // El Director IA decide la técnica: noche, HDR, mejor de una ráfaga o foto normal.
+            engine.capture(
+                CaptureDirector.plan(
+                    mode = currentState.mode,
+                    perception = perception,
+                    iaEnabled = iaEnabled,
+                    flashOn = currentState.flash == FlashSetting.ON,
+                ),
+            )
         }
     }
     LaunchedEffect(Unit) {
@@ -295,6 +308,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 ),
             )
             guidance = g
+            engine.rememberAutoExposure()
 
             if (!s.ready) return@collect
             val now = SystemClock.elapsedRealtime()
@@ -334,7 +348,8 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                     engine.cancelFocus()
                 }
             }
-            if (d.exposureEv != auto.appliedEv) {
+            // En PRO la exposición es manual: la IA no la toca.
+            if (s.mode != PhotoMode.PRO && d.exposureEv != auto.appliedEv) {
                 engine.setExposureEv(d.exposureEv)
                 auto.appliedEv = d.exposureEv
             }
@@ -564,21 +579,20 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 state.captureMegapixels?.let { mp -> InfoChip(String.format(Locale.US, "%.0f MP", mp)) }
                 if (state.mode != PhotoMode.FOTO) InfoChip(state.mode.label)
                 if (smartShutter && iaEnabled) InfoChip("AUTO-DISPARO")
+                val plan = CaptureDirector.plan(state.mode, perception, iaEnabled, state.flash == FlashSetting.ON)
+                if (plan.strategy != CaptureStrategy.SINGLE && state.processing == null) InfoChip(plan.description)
             }
 
-            if (state.capturing && state.mode != PhotoMode.FOTO) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color.Black.copy(alpha = 0.6f))
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    CircularProgressIndicator(color = Amber, modifier = Modifier.size(32.dp))
-                    Spacer(Modifier.height(8.dp))
-                    Text("Procesando… mantén el móvil quieto", color = Color.White, fontSize = 13.sp)
-                }
+            // Foto computacional en curso: primero se capturan las fotos, luego se procesan.
+            state.processing?.let { processing ->
+                ProcessingOverlay(processing, Modifier.align(Alignment.Center))
+            }
+            if (state.capturing && state.processing == null && state.mode.vendor) {
+                ProcessingOverlay(
+                    Processing("Procesando", 0f, capturingFrames = true),
+                    Modifier.align(Alignment.Center),
+                )
+            }
             }
 
             state.message?.let { message ->
@@ -616,6 +630,16 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
             verticalArrangement = Arrangement.SpaceEvenly,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            val pro = state.pro
+            val proRanges = state.proRanges
+            if (state.mode == PhotoMode.PRO && pro != null && proRanges != null) {
+                ProPanel(
+                    ranges = proRanges,
+                    settings = pro,
+                    onChange = { iso, exposure -> engine.setProExposure(iso, exposure) },
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
             ModeSelector(
                 modes = state.availableModes,
                 selected = state.mode,
@@ -755,5 +779,33 @@ private class SmartShutterState {
     private companion object {
         const val HOLD_MS = 700L
         const val COOLDOWN_MS = 3000L
+    }
+}
+
+/** Progreso de una foto computacional: "mantén quieto" mientras captura, porcentaje mientras procesa. */
+@Composable
+private fun ProcessingOverlay(processing: Processing, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.Black.copy(alpha = 0.65f))
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(processing.label, color = Amber, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        if (processing.capturingFrames) {
+            CircularProgressIndicator(color = Amber, modifier = Modifier.size(32.dp))
+            Spacer(Modifier.height(8.dp))
+            Text("Mantén el móvil quieto", color = Color.White, fontSize = 13.sp)
+        } else {
+            LinearProgressIndicator(
+                progress = { processing.progress },
+                color = Amber,
+                modifier = Modifier.size(width = 160.dp, height = 4.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            Text("Procesando ${(processing.progress * 100).toInt()} %", color = Color.White, fontSize = 13.sp)
+        }
     }
 }

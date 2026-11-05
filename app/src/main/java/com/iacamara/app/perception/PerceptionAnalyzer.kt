@@ -434,6 +434,23 @@ class PerceptionAnalyzer(
 
     private fun spanishOpen(label: String): String = yoloeSpanish[label] ?: label
 
+    /**
+     * Para elegir la mejor foto de una ráfaga: fracción de caras con los ojos abiertos en una foto
+     * reducida y derecha, o null si no hay caras (o el modelo no está disponible).
+     */
+    @Synchronized
+    fun eyesOpenScore(bitmap: Bitmap): Float? {
+        val landmarker = faceLandmarker ?: return null
+        val shapes = landmarker.detect(BitmapImageBuilder(bitmap).build()).faceBlendshapes().orElse(null) ?: return null
+        if (shapes.isEmpty()) return null
+        val open = shapes.count { face ->
+            val left = face.firstOrNull { it.categoryName() == "eyeBlinkLeft" }?.score() ?: 0f
+            val right = face.firstOrNull { it.categoryName() == "eyeBlinkRight" }?.score() ?: 0f
+            left < EYE_CLOSED && right < EYE_CLOSED
+        }
+        return open / shapes.size.toFloat()
+    }
+
     /** Espera a que termine el fotograma en curso antes de liberar los modelos. */
     @Synchronized
     fun close() {
