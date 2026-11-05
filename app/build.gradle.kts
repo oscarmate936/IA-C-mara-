@@ -19,7 +19,7 @@ android {
         minSdk = 34
         targetSdk = 36
         versionCode = buildNumber
-        versionName = "0.1.$buildNumber"
+        versionName = "0.2.$buildNumber"
         ndk {
             // Solo procesadores de 64 bits (S22+ y Magic 8 Lite): APK más pequeño.
             abiFilters += listOf("arm64-v8a")
@@ -73,6 +73,15 @@ android {
         }
     }
 
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
+    androidResources {
+        // Los modelos de IA se leen directamente del APK: no deben ir comprimidos.
+        noCompress += "tflite"
+    }
+
     lint {
         checkReleaseBuilds = false
         abortOnError = false
@@ -104,4 +113,9 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
     implementation(libs.androidx.camera.extensions)
+
+    // IA en el móvil (modelos dentro del APK, sin internet).
+    implementation(libs.mediapipe.tasks.vision)
+
+    testImplementation(libs.junit)
 }

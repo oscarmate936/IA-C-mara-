@@ -83,6 +83,23 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
+import android.os.SystemClock
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
+import com.iacamara.app.director.Direction
+import com.iacamara.app.director.DirectorCaps
+import com.iacamara.app.director.DirectorSession
+import com.iacamara.app.director.TipAction
+import com.iacamara.app.perception.MotionSensor
+import com.iacamara.app.perception.NRect
+import com.iacamara.app.perception.PerceptionAnalyzer
+import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.sqrt
 
 @Composable
 fun CameraScreen(onOpenDiagnostics: () -> Unit) {
@@ -97,6 +114,18 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
 
     var showGrid by remember { mutableStateOf(prefs.grid) }
     var showLevel by remember { mutableStateOf(prefs.level) }
+    var iaEnabled by remember { mutableStateOf(prefs.ia) }
+    var showHistogram by remember { mutableStateOf(prefs.histogram) }
+
+    // IA: percepción en vivo (Capa 1) + Director (Capa 2).
+    val motionSensor = remember { MotionSensor(context.applicationContext) }
+    val analyzer = remember { PerceptionAnalyzer(context.applicationContext, engine.captureMetadata, motionSensor) }
+    val perception by analyzer.perception.collectAsStateWithLifecycle()
+    val iaError by analyzer.error.collectAsStateWithLifecycle()
+    val director = remember { DirectorSession() }
+    val auto = remember { AutoFocusState() }
+    var direction by remember { mutableStateOf<Direction?>(null) }
+    var viewSize by remember { mutableStateOf(IntSize.Zero) }
 
     val previewView = remember {
         PreviewView(context).apply {
@@ -106,14 +135,24 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
+        engine.setAnalyzer(analyzer)
         engine.start(lifecycleOwner, previewView.surfaceProvider)
     }
     DisposableEffect(Unit) {
         ShutterKeys.enabled = true
         onDispose {
             ShutterKeys.enabled = false
-            engine.stop()
+            engine.release()
+            analyzer.close()
         }
+    }
+    DisposableEffect(iaEnabled) {
+        if (iaEnabled) motionSensor.start()
+        onDispose { motionSensor.stop() }
+    }
+    SideEffect {
+        analyzer.frontCamera = state.lens == Lens.FRONT
+        analyzer.enabled = iaEnabled
     }
 
     // Orientación física del móvil: gira los iconos y corrige la rotación de la foto.
@@ -130,6 +169,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 }
                 if (snapped != deviceDegrees) {
                     deviceDegrees = snapped
+                    analyzer.deviceDegrees = snapped
                     engine.setTargetRotation(
                         when (snapped) {
                             90 -> Surface.ROTATION_270
@@ -190,6 +230,65 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
     var focusPoint by remember { mutableStateOf<Offset?>(null) }
     var focusKey by remember { mutableIntStateOf(0) }
 
+    // Director IA: cada análisis decide enfoque, exposición y consejo, y los aplica a la cámara.
+    LaunchedEffect(Unit) {
+        analyzer.perception.collect { p ->
+            val s = currentState
+            if (s.bindGeneration != auto.generation) auto.reset(s.bindGeneration)
+            if (p == null || !iaEnabled || !s.analysisActive) {
+                direction = null
+                return@collect
+            }
+            val d = director.update(
+                p,
+                DirectorCaps(
+                    front = s.lens == Lens.FRONT,
+                    mode = s.mode,
+                    availableModes = s.availableModes,
+                    zoomRatio = s.zoomRatio,
+                    maxZoom = s.maxZoom,
+                    hasOpticalTele = s.hasOpticalTele,
+                    minEv = s.minEv,
+                    maxEv = s.maxEv,
+                ),
+            )
+            direction = d
+            if (!s.ready) return@collect
+            val now = SystemClock.elapsedRealtime()
+            if (now - auto.lastManualFocusMs > MANUAL_FOCUS_HOLD_MS && viewSize.width > 0) {
+                val target = d.focusTarget
+                if (target != null) {
+                    if (auto.shouldRefocus(target, now)) {
+                        val front = s.lens == Lens.FRONT
+                        val cx = if (front) 1f - target.centerX else target.centerX
+                        val regionSize = sqrt(target.area).coerceIn(0.1f, 0.4f)
+                        val point = previewView.meteringPointFactory.createPoint(
+                            cx * viewSize.width,
+                            target.centerY * viewSize.height,
+                            regionSize,
+                        )
+                        engine.focusOnSubject(point)
+                        auto.focused(target, now)
+                    }
+                } else if (auto.subjectLost(now)) {
+                    engine.cancelFocus()
+                }
+            }
+            if (d.exposureEv != auto.appliedEv) {
+                engine.setExposureEv(d.exposureEv)
+                auto.appliedEv = d.exposureEv
+            }
+        }
+    }
+    LaunchedEffect(iaEnabled) {
+        if (!iaEnabled) {
+            engine.cancelFocus()
+            engine.setExposureEv(0f)
+            auto.reset(auto.generation)
+            direction = null
+        }
+    }
+
     // Mensajes temporales.
     LaunchedEffect(state.message) {
         if (state.message != null) {
@@ -246,6 +345,26 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                 },
             )
             RotatingIconButton(
+                icon = Icons.Filled.BarChart,
+                description = "Histograma",
+                rotation = iconRotation,
+                active = showHistogram,
+                onClick = {
+                    showHistogram = !showHistogram
+                    prefs.histogram = showHistogram
+                },
+            )
+            RotatingIconButton(
+                icon = Icons.Filled.AutoAwesome,
+                description = "IA automática",
+                rotation = iconRotation,
+                active = iaEnabled,
+                onClick = {
+                    iaEnabled = !iaEnabled
+                    prefs.ia = iaEnabled
+                },
+            )
+            RotatingIconButton(
                 icon = Icons.Outlined.Info,
                 description = "Diagnóstico de cámara",
                 rotation = iconRotation,
@@ -257,7 +376,8 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(3f / 4f),
+                .aspectRatio(3f / 4f)
+                .onSizeChanged { viewSize = it },
         ) {
             AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
 
@@ -269,6 +389,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                         detectTapGestures { offset ->
                             val point = previewView.meteringPointFactory.createPoint(offset.x, offset.y)
                             engine.focus(point)
+                            auto.lastManualFocusMs = SystemClock.elapsedRealtime()
                             focusPoint = offset
                             focusKey++
                         }
@@ -282,6 +403,59 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
 
             if (showGrid) GridOverlay()
             if (showLevel) LevelOverlay(levelState)
+            val currentPerception = perception
+            if (iaEnabled && state.analysisActive && currentPerception != null) {
+                SubjectOverlay(currentPerception, front = state.lens == Lens.FRONT)
+                SceneBadge(
+                    perception = currentPerception,
+                    reason = direction?.reason,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 40.dp),
+                )
+                direction?.tip?.let { tip ->
+                    TipChip(
+                        tip = tip,
+                        onAction = {
+                            when (val action = tip.action) {
+                                is TipAction.SwitchMode -> engine.setMode(action.mode)
+                                is TipAction.SetZoom -> engine.setZoom(action.ratio)
+                                null -> Unit
+                            }
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 64.dp, start = 16.dp, end = 16.dp),
+                    )
+                }
+            }
+            if (showHistogram) {
+                currentPerception?.light?.let { light ->
+                    HistogramPanel(
+                        light = light,
+                        frameMs = currentPerception.frameMs,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(10.dp),
+                    )
+                }
+            }
+            if (iaEnabled && state.ready && !state.analysisActive) {
+                SmallNotice(
+                    "IA en pausa en este modo",
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 40.dp),
+                )
+            }
+            iaError?.let { error ->
+                SmallNotice(
+                    error,
+                    Modifier
+                        .align(Alignment.Center)
+                        .padding(16.dp),
+                )
+            }
             FocusRing(focusPoint, focusKey)
 
             // Destello al disparar.
@@ -326,7 +500,7 @@ fun CameraScreen(onOpenDiagnostics: () -> Unit) {
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 64.dp, start = 16.dp, end = 16.dp)
+                        .padding(bottom = 112.dp, start = 16.dp, end = 16.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xCCB00020))
                         .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -407,5 +581,54 @@ private fun openPhoto(context: Context, uri: Uri) {
         context.startActivity(intent)
     } catch (_: ActivityNotFoundException) {
         // No hay visor de fotos instalado: no se hace nada.
+    }
+}
+
+private const val MANUAL_FOCUS_HOLD_MS = 6000L
+
+/** Recuerda qué enfoque automático se ha aplicado para no repetirlo en cada fotograma. */
+private class AutoFocusState {
+    var generation = -1
+    var lastManualFocusMs = 0L
+    var appliedEv = Float.NaN
+    private var lastTarget: NRect? = null
+    private var lastFocusMs = 0L
+    private var lostSinceMs = 0L
+
+    fun reset(newGeneration: Int) {
+        generation = newGeneration
+        appliedEv = Float.NaN
+        lastTarget = null
+        lastFocusMs = 0L
+        lostSinceMs = 0L
+    }
+
+    /** Solo se vuelve a enfocar si el sujeto es nuevo, se ha movido o ha cambiado de tamaño. */
+    fun shouldRefocus(target: NRect, now: Long): Boolean {
+        lostSinceMs = 0L
+        val previous = lastTarget ?: return now - lastFocusMs > 400L
+        val moved = hypot(target.centerX - previous.centerX, target.centerY - previous.centerY) > 0.12f
+        val resized = abs(target.area - previous.area) > max(previous.area, 0.01f) * 0.6f
+        return (moved || resized) && now - lastFocusMs > 1200L
+    }
+
+    fun focused(target: NRect, now: Long) {
+        lastTarget = target
+        lastFocusMs = now
+    }
+
+    /** true una sola vez cuando el sujeto lleva más de 1,5 s sin verse (vuelve el enfoque normal). */
+    fun subjectLost(now: Long): Boolean {
+        if (lastTarget == null) return false
+        if (lostSinceMs == 0L) {
+            lostSinceMs = now
+            return false
+        }
+        if (now - lostSinceMs > 1500L) {
+            lastTarget = null
+            lostSinceMs = 0L
+            return true
+        }
+        return false
     }
 }

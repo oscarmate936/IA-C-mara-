@@ -43,7 +43,8 @@ hay que desinstalar la versión anterior antes de instalar la nueva.
 |---|---|---|
 | 0 — Base | Proyecto Android, compilación automática del APK, firma fija, sin permiso de internet | ✅ |
 | 1 — Cámara sólida | Visor 3:4, disparo, zoom (0.6x/1x/2x/3x/10x y pellizco), toque para enfocar, flash, rejilla de tercios, nivel de horizonte y nivel de burbuja para fotos cenitales, modos AUTO y RETRATO de Samsung en el S22+, botones de volumen como disparador, diagnóstico de cámara | ✅ Diagnóstico hecho en ambos móviles ([DISPOSITIVOS.md](docs/DISPOSITIVOS.md)); pendiente la prueba de fotos |
-| 2 — Percepción en vivo | Escena, sujeto, caras, luz | Siguiente |
+| 2 — Percepción en vivo | IA en el móvil (MediaPipe): reconoce 16 tipos de escena, detecta caras, personas, animales, comida y objetos, mide la luz (histograma, contraluz, luces quemadas) y el temblor; enfoca y mide la luz en el sujeto sola, corrige la exposición según la escena y da un consejo (tocable para cambiar a RETRATO o al 3x) | ✅ (pendiente de probar en tus móviles) |
+| 3 — Coach de composición | Líneas guía dinámicas, flechas, puntuación del encuadre, disparo inteligente | Siguiente |
 
 ## Probar la versión actual
 

@@ -1,0 +1,108 @@
+package com.iacamara.app.perception
+
+import kotlin.math.log2
+import kotlin.math.max
+import kotlin.math.min
+
+/** Rectángulo normalizado (0..1) en el encuadre vertical de la pantalla, sin espejo. */
+data class NRect(val left: Float, val top: Float, val right: Float, val bottom: Float) {
+    val width: Float get() = right - left
+    val height: Float get() = bottom - top
+    val area: Float get() = max(0f, width) * max(0f, height)
+    val centerX: Float get() = (left + right) / 2f
+    val centerY: Float get() = (top + bottom) / 2f
+
+    fun clamped(): NRect = NRect(
+        left.coerceIn(0f, 1f),
+        top.coerceIn(0f, 1f),
+        right.coerceIn(0f, 1f),
+        bottom.coerceIn(0f, 1f),
+    )
+
+    companion object {
+        fun of(x1: Float, y1: Float, x2: Float, y2: Float) = NRect(min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+    }
+}
+
+enum class SceneType(val label: String, val emoji: String) {
+    GENERAL("Foto", "📷"),
+    RETRATO("Retrato", "👤"),
+    GRUPO("Grupo", "👥"),
+    SELFIE("Selfie", "🤳"),
+    MASCOTA("Mascota", "🐾"),
+    COMIDA("Comida", "🍽️"),
+    FLORES("Flores", "🌸"),
+    MACRO("Macro", "🔍"),
+    PAISAJE("Paisaje", "🏞️"),
+    PLAYA("Playa", "🏖️"),
+    NIEVE("Nieve", "❄️"),
+    ATARDECER("Atardecer", "🌅"),
+    CIUDAD("Arquitectura", "🏛️"),
+    NOCHE("Noche", "🌙"),
+    INTERIOR("Interior", "🏠"),
+    OBJETO("Objeto", "📦"),
+}
+
+enum class Condition(val label: String) {
+    CONTRALUZ("Contraluz"),
+    POCA_LUZ("Poca luz"),
+    TEMBLOR("Temblor"),
+    MOVIMIENTO("Sujeto en movimiento"),
+    LUCES_QUEMADAS("Luces quemadas"),
+}
+
+enum class SubjectKind { CARA, PERSONA, ANIMAL, COMIDA, OBJETO }
+
+data class Subject(val kind: SubjectKind, val label: String, val box: NRect, val score: Float)
+
+/** Objeto detectado (etiqueta COCO en inglés, caja normalizada). */
+data class DetectedObject(val label: String, val box: NRect, val score: Float)
+
+/** Medidas de luz y color del fotograma. */
+class LightInfo(
+    /** 32 barras de luminancia, normalizadas a la mayor = 1. */
+    val histogram: FloatArray,
+    val meanLuma: Float,
+    val highlightClip: Float,
+    val shadowClip: Float,
+    val subjectLuma: Float,
+    val backgroundLuma: Float,
+    /** Fracción del tercio superior que es cielo azul. */
+    val skyBlue: Float,
+    /** Fracción del tercio superior con tonos cálidos de atardecer. */
+    val warmTop: Float,
+    /** Fracción de la imagen muy clara y sin color (nieve, arena clara, nubes). */
+    val brightNeutral: Float,
+    val saturation: Float,
+)
+
+/** Ajustes reales del sensor que la cámara está usando en el visor. */
+data class CaptureMeta(
+    val iso: Int,
+    val exposureNs: Long,
+    val aperture: Float,
+    /** Distancia de enfoque en cm; null = infinito o desconocida. */
+    val focusDistanceCm: Float?,
+    val timestampMs: Long,
+) {
+    /** Valor de exposición equivalente a ISO 100: <4 noche, 5–9 interior, 12–16 exterior de día. */
+    val ev100: Float
+        get() {
+            val seconds = exposureNs / 1_000_000_000.0
+            if (seconds <= 0.0 || iso <= 0) return 10f
+            return (log2(aperture.toDouble() * aperture / seconds) - log2(iso / 100.0)).toFloat()
+        }
+}
+
+data class Perception(
+    val scene: SceneType,
+    val conditions: Set<Condition>,
+    val subject: Subject?,
+    val faces: List<NRect>,
+    val light: LightInfo?,
+    val meta: CaptureMeta?,
+    /** Etiquetas principales del clasificador (para depurar). */
+    val labels: List<String>,
+    val frameMs: Long,
+    val timestampMs: Long,
+)

@@ -50,7 +50,11 @@ jobs:
       - name: Compilar el APK firmado
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace assembleRelease
+          ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleRelease
+
+      - name: Versión de MediaPipe usada
+        continue-on-error: true
+        run: ./gradlew --no-daemon -q :app:dependencyInsight --dependency com.google.mediapipe:tasks-vision --configuration releaseRuntimeClasspath | head -5
 
       - name: Preparar el archivo
         run: |
@@ -63,7 +67,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v0.1.${{ github.run_number }}"
+          TAG="v0.2.${{ github.run_number }}"
           if [ "$FIRMA" = "fija" ]; then
             UPDATE_NOTE="Se instala encima de la versión anterior sin perder nada."
           else
@@ -84,6 +88,6 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: IA-Camara-v0.1.${{ github.run_number }}
+          name: IA-Camara-v0.2.${{ github.run_number }}
           path: out/IA-Camara.apk
           retention-days: 30

@@ -14,8 +14,19 @@ class AppPrefs(context: Context) {
         get() = sp.getBoolean(KEY_LEVEL, true)
         set(value) = sp.edit().putBoolean(KEY_LEVEL, value).apply()
 
+    /** IA activa: analiza la escena y ajusta enfoque y exposición solos. */
+    var ia: Boolean
+        get() = sp.getBoolean(KEY_IA, true)
+        set(value) = sp.edit().putBoolean(KEY_IA, value).apply()
+
+    var histogram: Boolean
+        get() = sp.getBoolean(KEY_HISTOGRAM, false)
+        set(value) = sp.edit().putBoolean(KEY_HISTOGRAM, value).apply()
+
     private companion object {
         const val KEY_GRID = "rejilla"
         const val KEY_LEVEL = "nivel"
+        const val KEY_IA = "ia"
+        const val KEY_HISTOGRAM = "histograma"
     }
 }

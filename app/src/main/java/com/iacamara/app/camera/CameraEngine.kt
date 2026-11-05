@@ -3,10 +3,16 @@ package com.iacamara.app.camera
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CameraMetadata
 import android.net.Uri
 import android.provider.MediaStore
+import android.util.Size
 import android.view.Surface
+import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.core.Camera
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
@@ -21,6 +27,7 @@ import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import com.iacamara.app.perception.CaptureMetadata
 import com.iacamara.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,7 +38,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 enum class Lens { BACK, FRONT }
 
@@ -72,6 +82,15 @@ data class CameraUiState(
     val capturing: Boolean = false,
     val lastPhotoUri: Uri? = null,
     val message: String? = null,
+    /** La IA está analizando el visor (algunos modos del fabricante no lo permiten). */
+    val analysisActive: Boolean = false,
+    val exposureEv: Float = 0f,
+    val minEv: Float = 0f,
+    val maxEv: Float = 0f,
+    /** El móvil tiene teleobjetivo óptico (S22+: 3x). */
+    val hasOpticalTele: Boolean = false,
+    /** Aumenta cada vez que se vuelve a abrir la cámara (los ajustes automáticos se reinician). */
+    val bindGeneration: Int = 0,
 )
 
 /**
@@ -93,6 +112,16 @@ class CameraEngine(private val context: Context) {
     private var targetRotation: Int = Surface.ROTATION_0
     private var targetZoom: Float = 1f
 
+    /** Lecturas del sensor (ISO, exposición, enfoque) del visor, para la IA. */
+    val captureMetadata = CaptureMetadata()
+    private var analyzer: ImageAnalysis.Analyzer? = null
+    private val analysisExecutor = Executors.newSingleThreadExecutor()
+
+    /** Se debe llamar antes de start(). */
+    fun setAnalyzer(analyzer: ImageAnalysis.Analyzer?) {
+        this.analyzer = analyzer
+    }
+
     suspend fun start(owner: LifecycleOwner, surfaceProvider: Preview.SurfaceProvider) {
         lifecycleOwner = owner
         this.surfaceProvider = surfaceProvider
@@ -105,7 +134,8 @@ class CameraEngine(private val context: Context) {
             }.getOrNull()
         }
         val hasFront = runCatching { cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) }.getOrDefault(false)
-        _state.update { it.copy(hasFrontCamera = hasFront) }
+        val tele = withContext(Dispatchers.Default) { detectOpticalTele() }
+        _state.update { it.copy(hasFrontCamera = hasFront, hasOpticalTele = tele) }
         bind()
         refreshLastPhoto()
     }
@@ -114,7 +144,13 @@ class CameraEngine(private val context: Context) {
         provider?.unbindAll()
         camera = null
         imageCapture = null
-        _state.update { it.copy(ready = false, capturing = false) }
+        _state.update { it.copy(ready = false, capturing = false, analysisActive = false) }
+    }
+
+    /** Libera el hilo de análisis; el motor ya no se puede volver a usar. */
+    fun release() {
+        stop()
+        analysisExecutor.shutdown()
     }
 
     private fun baseSelector(lens: Lens): CameraSelector =
@@ -164,18 +200,41 @@ class CameraEngine(private val context: Context) {
             ext.getExtensionEnabledCameraSelector(base, mode.extensionMode)
         }
 
-        val preview = Preview.Builder()
-            .setResolutionSelector(previewResolution())
-            .build()
+        val previewBuilder = Preview.Builder().setResolutionSelector(previewResolution())
+        if (mode == PhotoMode.FOTO) {
+            // Lee ISO, exposición y distancia de enfoque de cada fotograma (la IA las usa para la luz).
+            Camera2Interop.Extender(previewBuilder).setSessionCaptureCallback(captureMetadata.callback)
+        }
+        val preview = previewBuilder.build()
         preview.setSurfaceProvider(sp)
+        captureMetadata.clear()
 
         val capture = buildCapture(current.flash)
+        val currentAnalyzer = analyzer
+        val analysisAllowed = currentAnalyzer != null && (
+            mode == PhotoMode.FOTO || ext == null ||
+                runCatching { ext.isImageAnalysisSupported(base, mode.extensionMode) }.getOrDefault(false)
+            )
+        val analysis = if (analysisAllowed && currentAnalyzer != null) buildAnalysis(currentAnalyzer) else null
+
         cameraProvider.unbindAll()
+        var analysisActive = analysis != null
         val boundCamera = try {
-            cameraProvider.bindToLifecycle(owner, selector, preview, capture)
+            if (analysis != null) {
+                cameraProvider.bindToLifecycle(owner, selector, preview, capture, analysis)
+            } else {
+                cameraProvider.bindToLifecycle(owner, selector, preview, capture)
+            }
         } catch (e: Exception) {
-            _state.update { it.copy(ready = false, message = "No se pudo abrir la cámara: ${e.message}") }
-            return
+            // Si el móvil no acepta las tres salidas a la vez, se abre sin análisis.
+            cameraProvider.unbindAll()
+            analysisActive = false
+            try {
+                cameraProvider.bindToLifecycle(owner, selector, preview, capture)
+            } catch (second: Exception) {
+                _state.update { it.copy(ready = false, message = "No se pudo abrir la cámara: ${second.message}") }
+                return
+            }
         }
 
         camera = boundCamera
@@ -184,6 +243,9 @@ class CameraEngine(private val context: Context) {
         observeZoom(boundCamera, owner)
 
         val size = capture.resolutionInfo?.resolution
+        val exposure = boundCamera.cameraInfo.exposureState
+        val step = exposure.exposureCompensationStep.toFloat()
+        val evSupported = exposure.isExposureCompensationSupported && step > 0f
         _state.update {
             it.copy(
                 ready = true,
@@ -191,9 +253,45 @@ class CameraEngine(private val context: Context) {
                 availableModes = modes,
                 hasFlash = boundCamera.cameraInfo.hasFlashUnit(),
                 captureMegapixels = size?.let { s -> s.width * s.height / 1_000_000f },
+                analysisActive = analysisActive,
+                exposureEv = 0f,
+                minEv = if (evSupported) exposure.exposureCompensationRange.lower * step else 0f,
+                maxEv = if (evSupported) exposure.exposureCompensationRange.upper * step else 0f,
+                bindGeneration = it.bindGeneration + 1,
             )
         }
     }
+
+    private fun buildAnalysis(analyzer: ImageAnalysis.Analyzer): ImageAnalysis = ImageAnalysis.Builder()
+        .setResolutionSelector(
+            ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(
+                    ResolutionStrategy(Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER),
+                )
+                .build(),
+        )
+        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+        .build()
+        .also { it.setAnalyzer(analysisExecutor, analyzer) }
+
+    /** ¿Alguna cámara trasera tiene focal equivalente de 50 mm o más (teleobjetivo óptico)? */
+    private fun detectOpticalTele(): Boolean = runCatching {
+        val manager = context.getSystemService(CameraManager::class.java) ?: return@runCatching false
+        val ids = manager.cameraIdList.flatMap { id ->
+            listOf(id) + runCatching { manager.getCameraCharacteristics(id).physicalCameraIds.toList() }
+                .getOrDefault(emptyList())
+        }.distinct()
+        ids.any { id ->
+            val c = manager.getCameraCharacteristics(id)
+            if (c.get(CameraCharacteristics.LENS_FACING) != CameraMetadata.LENS_FACING_BACK) return@any false
+            val size = c.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE) ?: return@any false
+            val diagonal = sqrt(size.width * size.width + size.height * size.height)
+            val focals = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS) ?: return@any false
+            diagonal > 0f && focals.any { it * 43.27f / diagonal >= 50f }
+        }
+    }.getOrDefault(false)
 
     private var observedCamera: Camera? = null
 
@@ -233,12 +331,40 @@ class CameraEngine(private val context: Context) {
 
     fun zoomBy(factor: Float) = setZoom(targetZoom * factor)
 
+    /** Enfoque y medición tocando la pantalla: se mantiene unos segundos. */
     fun focus(point: MeteringPoint) {
         val action = FocusMeteringAction.Builder(
             point,
             FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB,
         ).setAutoCancelDuration(FOCUS_HOLD_SECONDS, TimeUnit.SECONDS).build()
         camera?.cameraControl?.startFocusAndMetering(action)
+    }
+
+    /** Enfoque y medición automáticos sobre el sujeto que ha encontrado la IA: se mantienen hasta que cambie. */
+    fun focusOnSubject(point: MeteringPoint) {
+        val action = FocusMeteringAction.Builder(
+            point,
+            FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE,
+        ).disableAutoCancel().build()
+        camera?.cameraControl?.startFocusAndMetering(action)
+    }
+
+    fun cancelFocus() {
+        camera?.cameraControl?.cancelFocusAndMetering()
+    }
+
+    /** Compensación de exposición en EV, ajustada a los pasos que permite la cámara. */
+    fun setExposureEv(ev: Float) {
+        val cam = camera ?: return
+        val exposure = cam.cameraInfo.exposureState
+        val step = exposure.exposureCompensationStep.toFloat()
+        if (!exposure.isExposureCompensationSupported || step <= 0f) return
+        val range = exposure.exposureCompensationRange
+        val index = (ev / step).roundToInt().coerceIn(range.lower, range.upper)
+        if (index != exposure.exposureCompensationIndex) {
+            cam.cameraControl.setExposureCompensationIndex(index)
+        }
+        _state.update { it.copy(exposureEv = index * step) }
     }
 
     fun setTargetRotation(rotation: Int) {
