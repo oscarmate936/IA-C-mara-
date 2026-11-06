@@ -71,6 +71,7 @@ Notas:
   Umbrales medidos con las fotos del usuario, de día y oscurecidas con ruido como de noche.
 - **MobileCLIP2** (sustituto previsto de TinyCLIP) no se incluyó: sus pesos solo se publican en Hugging Face y en el
   servidor de Apple, y la red del entorno de compilación no llega a ellos. TinyCLIP sigue haciendo ese trabajo.
+  Queda para la fase de pulido (hace falta dar permiso desde el ordenador), igual que YOLO26s.
 - **YOLO26s** (sustituto previsto de YOLO11s) tampoco: exportarlo exige abrir el archivo de pesos de PyTorch
   descargado, y el entorno de compilación no lo permite por seguridad. YOLO11s sigue siendo el detector grande.
 - EfficientDet-Lite0/Lite2 se retiraron: YOLO26n es más preciso y además hay dos comprobaciones extra
