@@ -221,27 +221,44 @@ class PerceptionAnalyzer(
             if (backend != Backend.CPU) clock.resetAverage()
             updateActive()
         }
+        val explainDetections = { a: Any, b: Any -> OutputCheck.explainDetections(a, b) }
+        val explainSimilarity = { a: Any, b: Any -> OutputCheck.explainSimilarity(a, b) }
         saliencyModel?.let {
             accelerator.optimize(
-                Accelerator.Job(it, { a, b -> OutputCheck.similar(a, b, 0.95f) }, informative = { out -> OutputCheck.hasSalience(out) }, onDone = accelerated(saliencyClock)),
+                Accelerator.Job(
+                    it, { a, b -> OutputCheck.similar(a, b, 0.95f) }, informative = { out -> OutputCheck.hasSalience(out) },
+                    explain = explainSimilarity, onDone = accelerated(saliencyClock),
+                ),
             )
         }
         yoloeModel?.let {
-            accelerator.optimize(Accelerator.Job(it, detections, informative = hasDetections, onDone = accelerated(yoloeClock)))
+            accelerator.optimize(Accelerator.Job(it, detections, informative = hasDetections, explain = explainDetections, onDone = accelerated(yoloeClock)))
         }
         yoloModel?.let { model ->
             accelerator.optimize(
-                Accelerator.Job(model, detections, informative = hasDetections) { backend, ms ->
+                Accelerator.Job(model, detections, informative = hasDetections, explain = explainDetections) { backend, ms ->
                     accelerated(yoloClock)(backend, ms)
                     if (backend != Backend.CPU) tryBiggerDetector(model)
                 },
             )
         }
         aestheticModel?.let {
-            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.sameMeanScore(a, b) }, onDone = accelerated(aestheticClock)))
+            accelerator.optimize(
+                Accelerator.Job(
+                    it, { a, b -> OutputCheck.sameMeanScore(a, b) },
+                    explain = { a, b -> OutputCheck.explainMeanScore(a, b) }, onDone = accelerated(aestheticClock),
+                ),
+            )
         }
+        // CLIP se desborda en coma flotante de 16 bits (algún valor intermedio pasa de 65 504 y sale NaN):
+        // en el NPU no puede ir. La GPU sí se prueba.
         clipModel?.let {
-            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.similar(a, b, 0.98f) }, onDone = accelerated(labelsClock)))
+            accelerator.optimize(
+                Accelerator.Job(
+                    it, { a, b -> OutputCheck.similar(a, b, 0.98f) }, explain = explainSimilarity,
+                    skip = setOf(Backend.NPU, Backend.NPU_INT8), onDone = accelerated(labelsClock),
+                ),
+            )
         }
     }
 
@@ -259,6 +276,7 @@ class PerceptionAnalyzer(
                 informative = { out -> OutputCheck.hasDetections(out) },
                 accept = { backend, ms, _ -> backend != Backend.CPU && ms <= 40f },
                 sampleFrom = small,
+                explain = { a, b -> OutputCheck.explainDetections(a, b) },
             ) { backend, _ -> switchDetector(small, big, backend) },
         )
     }

@@ -268,6 +268,8 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
      *   nada no sirve: cualquier acelerador roto "coincidiría").
      * @param accept condición extra para aceptar un acelerador (backend, ms acelerado, ms en CPU).
      * @param sampleFrom modelo del que tomar una imagen real de prueba (por defecto, el mismo).
+     * @param explain describe en qué difieren dos salidas (para el diagnóstico si no coinciden).
+     * @param skip aceleradores que no se prueban con este modelo (p. ej. se sabe que se desborda en FP16).
      * @param onDone se llama exactamente una vez con el resultado (en el hilo del acelerador).
      */
     class Job(
@@ -276,6 +278,8 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
         val informative: (Any) -> Boolean = { true },
         val accept: (Backend, Float, Float) -> Boolean = { _, _, _ -> true },
         val sampleFrom: OnnxModel = model,
+        val explain: ((Any, Any) -> String)? = null,
+        val skip: Set<Backend> = emptySet(),
         val onDone: (Backend, Float) -> Unit = { _, _ -> },
     )
 
@@ -360,6 +364,7 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
                 if (backend == Backend.NPU && store.error(m.key, backend)?.contains(MISMATCH) == true) npuRuns = true
                 continue
             }
+            if (backend in job.skip) continue
             // La versión de 8 bits es para los NPU sin coma flotante: si el normal funciona, sobra.
             if (backend == Backend.NPU_INT8 && (npuRuns || !m.hasInt8)) continue
             probingNow = "${m.key} ${backend.label}"
@@ -371,8 +376,8 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
                         if (backend == Backend.NPU) npuRuns = true
                         // Una sola imagen engaña (niebla, noche, detecciones justas): tiene que coincidir en la
                         // mayoría de 3 imágenes reales.
-                        val passes = agreementOf(job, s, job.check(reference, out))
-                        check(passes >= 2) { "$MISMATCH ($passes de 3 imágenes)" }
+                        val (passes, why) = agreementOf(job, s, reference, out)
+                        check(passes >= 2) { "$MISMATCH ($passes de 3 imágenes)" + (why?.let { " · $it" } ?: "") }
                         s to measure { m.runSample(s, sample) }
                     } catch (e: Throwable) {
                         s.close()
@@ -410,18 +415,25 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
 
     /**
      * Cuántas de hasta 3 imágenes reales dan el mismo resultado en `session` que en el procesador, contando
-     * la primera (`first`). Se para en cuanto la mayoría está decidida.
+     * la primera (ya ejecutada). Se para en cuanto la mayoría está decidida. También devuelve en qué
+     * difería la última que no coincidió (para el diagnóstico).
      */
-    private fun agreementOf(job: Job, session: OrtSession, first: Boolean): Int {
-        var passes = if (first) 1 else 0
+    private fun agreementOf(job: Job, session: OrtSession, firstReference: Any, firstOutput: Any): Pair<Int, String?> {
+        var why: String? = null
+        fun compare(reference: Any, output: Any): Boolean {
+            val same = job.check(reference, output)
+            if (!same) why = runCatching { job.explain?.invoke(reference, output) }.getOrNull()
+            return same
+        }
+        var passes = if (compare(firstReference, firstOutput)) 1 else 0
         var tried = 1
         while (tried < 3 && passes < 2 && passes + (3 - tried) >= 2 && !closed) {
             job.sampleFrom.discardSample() // otra imagen distinta
             val (sample, reference) = informativeSample(job) ?: break
-            if (job.check(reference, job.model.runSample(session, sample))) passes++
+            if (compare(reference, job.model.runSample(session, sample))) passes++
             tried++
         }
-        return passes
+        return passes to why
     }
 
     /** Una imagen real cuya salida en el procesador sirve para comparar, con esa salida. */

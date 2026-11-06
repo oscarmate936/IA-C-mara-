@@ -36,6 +36,17 @@ class OutputCheckTest {
     }
 
     @Test
+    fun elDiagnosticoDiceEnQueDifieren() {
+        // El acelerador cambió la clase del perro: se ve en la explicación.
+        val wrong = detections(person, floatArrayOf(252f, 199f, 349f, 301f, 0.7f, 3f))
+        val text = OutputCheck.explainDetections(detections(person, dog), wrong)
+        assertTrue(text, text.contains("16:0") && text.contains("3:0"))
+        // No ve nada.
+        assertTrue(OutputCheck.explainDetections(detections(person), detections()).contains("→nada"))
+        assertTrue(OutputCheck.explainSimilarity(arrayOf(floatArrayOf(1f, 2f)), arrayOf(floatArrayOf(Float.NaN, 2f))).contains("NaN"))
+    }
+
+    @Test
     fun claseDistintaNoVale() {
         val wrong = detections(person, floatArrayOf(250f, 200f, 350f, 300f, 0.7f, 17f))
         assertFalse(OutputCheck.sameDetections(detections(person, dog), wrong))

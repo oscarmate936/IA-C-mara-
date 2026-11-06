@@ -34,6 +34,34 @@ object OutputCheck {
         return matched >= (ref.size * 0.8f) && strongOut <= ref.size + 2
     }
 
+    /**
+     * Qué difiere entre dos salidas de un detector, para el diagnóstico: las detecciones claras de cada
+     * uno (clase:puntuación) y, para cada una del procesador, la más parecida del acelerador (IoU).
+     * Así se distingue un acelerador que no ve nada, que cambia las clases o que mueve las cajas.
+     */
+    fun explainDetections(reference: Any, candidate: Any): String {
+        val ref = rows(reference).filter { it[4] >= 0.3f }.sortedByDescending { it[4] }.take(4)
+        val out = rows(candidate).filter { it[4] >= 0.3f }.sortedByDescending { it[4] }.take(4)
+        fun fmt(r: FloatArray) = "${r[5].toInt()}:${"%.2f".format(r[4])}"
+        val pairs = ref.joinToString(", ") { r ->
+            val best = rows(candidate).maxByOrNull { iou(it, r) }
+            if (best == null || iou(best, r) <= 0f) "${fmt(r)}→nada" else "${fmt(r)}→${fmt(best)} IoU ${"%.2f".format(iou(best, r))}"
+        }
+        return "CPU [${ref.joinToString(", ") { fmt(it) }}] · acelerador [${out.joinToString(", ") { fmt(it) }}] · $pairs"
+    }
+
+    /** Coseno entre dos salidas densas, para el diagnóstico ("NaN" = el acelerador se desbordó). */
+    fun explainSimilarity(reference: Any, candidate: Any): String {
+        val a = flatten(reference)
+        val b = flatten(candidate)
+        if (a.size != b.size) return "tamaños distintos (${a.size} y ${b.size})"
+        return "coseno ${"%.3f".format(cosine(a, b))}"
+    }
+
+    /** Nota media de NIMA en cada uno, para el diagnóstico. */
+    fun explainMeanScore(reference: Any, candidate: Any): String =
+        "nota ${"%.2f".format(meanScore(flatten(reference)))} en el procesador y ${"%.2f".format(meanScore(flatten(candidate)))} en el acelerador"
+
     /** La salida de un detector sirve para comparar si tiene al menos una detección clara. */
     fun hasDetections(output: Any, minScore: Float = CLEAR): Boolean = rows(output).any { it[4] >= minScore }
 

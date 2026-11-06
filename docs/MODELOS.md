@@ -30,7 +30,11 @@ Notas:
   sea justa, mientras se mide la velocidad el visor pausa los demás modelos; los detectores solo se comparan con
   imágenes en las que detecten algo claro (puntuación ≥ 0,45: las detecciones dudosas aparecen y desaparecen con
   cualquier diferencia mínima de precisión, sobre todo con niebla o de noche), y cada acelerador tiene que coincidir
-  en 2 de 3 imágenes reales. La versión de 8 bits solo se prueba si el NPU normal no llega a ejecutarse. Se prueban primero los modelos más lentos.
+  en 2 de 3 imágenes reales. La versión de 8 bits solo se prueba si el NPU normal no llega a ejecutarse.
+  Si un acelerador no coincide, el diagnóstico dice en qué difiere (para los detectores: qué ve el procesador y qué
+  ve el acelerador, clase:puntuación e IoU; para los mapas, el coseno). CLIP no se prueba en el NPU: en coma flotante
+  de 16 bits algún valor intermedio se desborda y sale NaN (comprobado simulándolo); en el procesador tarda ~25–40 ms.
+  YOLO11n y YOLOE simulados en 16 bits sí coinciden con el procesador (8/8 y 7/7). Se prueban primero los modelos más lentos.
   El panel 📊 muestra dónde corre cada modelo (NPU, GPU o CPU), cuánto tarda y qué se está probando; el informe de
   Diagnóstico (ⓘ → Copiar) incluye la sección «ACELERACIÓN» con los tiempos medidos y el motivo de cada descarte.
 - **NPU de 8 bits (Honor y otros gama media).** El NPU del Snapdragon 6 Gen 4 (SM6650) no admite coma flotante
