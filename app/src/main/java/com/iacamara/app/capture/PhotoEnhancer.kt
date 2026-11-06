@@ -9,6 +9,7 @@ import com.iacamara.app.imaging.AutoEnhance
 import com.iacamara.app.imaging.CropHint
 import com.iacamara.app.imaging.PhotoGeometry
 import com.iacamara.app.imaging.ShotContext
+import com.iacamara.app.imaging.StyleAdjust
 import com.iacamara.app.perception.NRect
 import com.iacamara.app.perception.SceneType
 import java.io.ByteArrayInputStream
@@ -46,8 +47,11 @@ class PhotoEnhancer(private val context: Context) {
     /** Nota de estética 1–10 de una foto reducida y derecha. */
     var aestheticScorer: ((Bitmap) -> Float?)? = null
 
-    /** Devuelve la Uri de la copia mejorada, o null si no se guardó (no mejoraba o falló). */
-    fun enhance(source: Uri, shot: ShotInfo, alreadyProcessed: Boolean, geometry: Boolean): Uri? {
+    /**
+     * Devuelve la Uri de la copia mejorada, o null si no se guardó (no mejoraba o falló).
+     * @param style tu estilo (Fase 7) para este tipo de foto.
+     */
+    fun enhance(source: Uri, shot: ShotInfo, alreadyProcessed: Boolean, geometry: Boolean, style: StyleAdjust = StyleAdjust.NONE): Uri? {
         val bytes = context.contentResolver.openInputStream(source)?.use { it.readBytes() } ?: return null
         val exif = runCatching { ExifInterface(ByteArrayInputStream(bytes)) }.getOrNull()
         val orientation = exif?.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
@@ -72,13 +76,14 @@ class PhotoEnhancer(private val context: Context) {
         small.recycle()
 
         val ctx = ShotContext(shot.scene, faces, shot.iso, alreadyProcessed)
-        var out = AutoEnhance.enhance(px, w, h, ctx)
+        var out = AutoEnhance.enhance(px, w, h, ctx, style = style)
         var note = shot.scene.label
+        if (!style.isNeutral) note += ", tu estilo: ${style.describe()}"
         if (before != null) {
             val after = score(out, w, h)
             if (after != null && after < before - TOLERANCE) {
                 // La mejora completa no convence: a mitad de fuerza, y si tampoco, no se guarda.
-                out = AutoEnhance.enhance(px, w, h, ctx, strength = 0.5f)
+                out = AutoEnhance.enhance(px, w, h, ctx, strength = 0.5f, style = style)
                 val soft = score(out, w, h)
                 if (soft != null && soft < before - TOLERANCE) return null
                 note += ", suave"

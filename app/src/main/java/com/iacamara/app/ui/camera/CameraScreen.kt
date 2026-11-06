@@ -77,12 +77,14 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.iacamara.app.ShutterKeys
 import com.iacamara.app.camera.CameraEngine
+import com.iacamara.app.camera.EnhancedShot
 import com.iacamara.app.camera.FlashSetting
 import com.iacamara.app.camera.Lens
 import com.iacamara.app.camera.PhotoMode
 import com.iacamara.app.sensors.LevelReading
 import com.iacamara.app.sensors.LevelSensor
 import com.iacamara.app.settings.AppPrefs
+import com.iacamara.app.settings.LearningBook
 import com.iacamara.app.ui.theme.Amber
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.emptyFlow
@@ -165,7 +167,10 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
     val guideStabilizer = remember { GuideStyleStabilizer() }
     var smartShutter by remember { mutableStateOf(prefs.smartShutter) }
     // Fotógrafo veterano (Fase 6): un consejo cada vez, crítica de la última foto y explicación de la técnica.
-    val coach = remember { CoachSession() }
+    // Fase 7: lo aprendido de ti (consejos silenciados, la frase que te funciona, lo que ya dominas).
+    val coach = remember { CoachSession(LearningBook.get(context).tips) }
+    var comparing by remember { mutableStateOf<EnhancedShot?>(null) }
+    var tasting by remember { mutableStateOf<EnhancedShot?>(null) }
     var coachTip by remember { mutableStateOf<CoachTip?>(null) }
     var explanation by remember { mutableStateOf<String?>(null) }
     var critiqueExpanded by remember { mutableStateOf(false) }
@@ -200,7 +205,11 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> analyzer.setForeground(true)
+                Lifecycle.Event.ON_START -> {
+                    analyzer.setForeground(true)
+                    // Al volver (p. ej. de la galería): ¿borraste alguna copia? También se aprende de eso.
+                    engine.learnFromDeletions()
+                }
                 Lifecycle.Event.ON_STOP -> analyzer.setForeground(false)
                 else -> Unit
             }
@@ -340,6 +349,8 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
             )
             engine.clearCritique()
             critiqueExpanded = false
+            // El coach anota qué consejos salieron al encuadrar y si había uno en pantalla sin seguir.
+            coach.onShutter()
             engine.capture(plan, shot, review)
         }
     }
@@ -749,6 +760,56 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                     )
                 }
+                state.info?.let { info ->
+                    Text(
+                        text = info,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xCC1B5E20))
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                    LaunchedEffect(info) {
+                        delay(INFO_MS)
+                        engine.clearInfo()
+                    }
+                }
+                state.enhanced?.let { shot ->
+                    EnhanceCard(
+                        shot = shot,
+                        onRate = { liked -> engine.rateEnhancement(liked) },
+                        onCompare = { comparing = shot },
+                        onClose = { engine.dismissEnhancement() },
+                    )
+                    // Si no dices nada, la pregunta se va sola al cabo de un rato.
+                    LaunchedEffect(shot) {
+                        delay(ENHANCE_ASK_MS)
+                        if (comparing != shot && tasting != shot && engine.state.value.enhanced == shot) engine.dismissEnhancement()
+                    }
+                }
+                comparing?.let { shot ->
+                    CompareDialog(
+                        shot = shot,
+                        onRate = { liked ->
+                            comparing = null
+                            if (engine.state.value.enhanced == shot) engine.rateEnhancement(liked)
+                        },
+                        onTaste = {
+                            comparing = null
+                            tasting = shot
+                            if (engine.state.value.enhanced == shot) engine.dismissEnhancement()
+                        },
+                        onDismiss = { comparing = null },
+                    )
+                }
+                tasting?.let { shot ->
+                    TasteTestDialog(shot) { learned ->
+                        tasting = null
+                        engine.showInfo(learned ?: "Anotado: seguiré afinando tu estilo con tus elecciones")
+                    }
+                }
                 state.critique?.let { critique ->
                     CritiqueCard(
                         critique = critique,
@@ -773,6 +834,14 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
                                     is TipAction.SetZoom -> engine.setZoom(action.ratio)
                                     null -> Unit
                                 }
+                            },
+                            onMute = if (coachTip?.mutable == true) {
+                                {
+                                    coach.muteCurrent()?.let { engine.showInfo("Vale, no te lo diré en un mes (se puede deshacer en Ajustes)") }
+                                    coachTip = null
+                                }
+                            } else {
+                                null
                             },
                         )
                     }
@@ -870,6 +939,12 @@ private fun openPhoto(context: Context, uri: Uri) {
 }
 
 private const val MANUAL_FOCUS_HOLD_MS = 6000L
+
+/** Lo que dura en pantalla un aviso de lo aprendido. */
+private const val INFO_MS = 4000L
+
+/** Lo que espera la pregunta "¿te gusta la mejora?" antes de irse sola. */
+private const val ENHANCE_ASK_MS = 25_000L
 
 /** Recuerda qué enfoque automático se ha aplicado para no repetirlo en cada fotograma. */
 private class AutoFocusState {

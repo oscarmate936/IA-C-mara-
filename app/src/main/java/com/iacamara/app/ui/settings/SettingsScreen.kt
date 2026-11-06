@@ -27,6 +27,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,8 +41,13 @@ import androidx.compose.ui.unit.sp
 import com.iacamara.app.settings.AppPrefs
 import com.iacamara.app.settings.EnhanceMode
 import com.iacamara.app.settings.HabitBook
+import com.iacamara.app.settings.LearningBook
+import com.iacamara.app.learning.TipLearner
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-/** Ajustes de la app: mejora automática, fotógrafo veterano (crítica y hábitos), RAW y diagnóstico. */
+/** Ajustes de la app: mejora automática, fotógrafo veterano (crítica y hábitos), tu estilo, RAW y diagnóstico. */
 @Composable
 fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
     val context = LocalContext.current
@@ -52,6 +58,12 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
     var critique by remember { mutableStateOf(prefs.critique) }
     val habitBook = remember { HabitBook.get(context.applicationContext) }
     var habits by remember { mutableStateOf(habitBook.active()) }
+    val learning = remember { LearningBook.get(context.applicationContext) }
+    var learn by remember { mutableStateOf(prefs.learning) }
+    var muted by remember { mutableStateOf(learning.tips.mutedList(System.currentTimeMillis())) }
+    // Cambia al olvidar lo aprendido, para que la sección se vuelva a dibujar vacía.
+    var forgotten by remember { mutableIntStateOf(0) }
+    val dateFormat = remember { SimpleDateFormat("d MMM", Locale.forLanguageTag("es-ES")) }
     BackHandler(onBack = onBack)
 
     Column(
@@ -156,6 +168,79 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
                 habitBook.clear()
                 habits = emptyList()
             }) { Text("Olvidar mis hábitos") }
+
+            Spacer(Modifier.height(12.dp))
+            Section("Tu estilo")
+            Note(
+                "La app aprende cómo te gusta la mejora automática en cada tipo de foto, solo en este móvil (y " +
+                    "lo conserva al actualizarla). Lo más rápido: después de una foto, toca «Comparar» → «Afinar mi " +
+                    "estilo» y elige entre tres versiones, como en el óptico (8 rondas). También aprende, poco a " +
+                    "poco, de tus 👍/👎, de qué copia borras (si guardas las dos), de los consejos que silencias " +
+                    "y de lo que ya dominas.",
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("Aprender de mis fotos", color = Color.White, fontSize = 15.sp)
+                    Text(
+                        "Si lo desactivas deja de probar versiones y de preguntar; lo ya aprendido se sigue aplicando.",
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 12.sp,
+                    )
+                }
+                Switch(checked = learn, onCheckedChange = {
+                    learn = it
+                    prefs.learning = it
+                })
+            }
+            val styles = remember(forgotten) { learning.style.summary() }
+            if (styles.isEmpty()) {
+                Text("Todavía no ha aprendido nada: afina tu estilo o valora algunas fotos mejoradas.", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+            } else {
+                styles.forEach { (group, g) ->
+                    val look = g.style.describe().ifEmpty { "como la receta de la escena" }
+                    Text("• ${group.label}: $look (${g.choices} elecciones, ${g.ratings} valoraciones)", color = Color.White, fontSize = 13.sp)
+                }
+            }
+            val mastered = remember(forgotten) { learning.tips.mastered() }
+            if (mastered.isNotEmpty()) {
+                Text(
+                    "Ya dominas: " + mastered.sorted().joinToString(", ") { TipLearner.skillLabel(it) } +
+                        ". Esos consejos salen menos.",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                )
+            }
+            if (muted.isNotEmpty()) {
+                Text("Consejos silenciados (30 días):", color = Color.White, fontSize = 13.sp)
+                muted.forEach { m ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Text("«${m.text}»", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        Text(
+                            "Volver a mostrar",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 12.sp,
+                            modifier = Modifier
+                                .clickable {
+                                    learning.tips.unmute(m.id)
+                                    muted = learning.tips.mutedList(System.currentTimeMillis())
+                                }
+                                .padding(8.dp),
+                        )
+                    }
+                }
+            }
+            val events = remember(forgotten) { learning.log.recent(5) }
+            if (events.isNotEmpty()) {
+                Text("Últimos aprendizajes:", color = Color.White, fontSize = 13.sp)
+                events.forEach { e ->
+                    Text("• ${dateFormat.format(Date(e.time))} · ${e.text}", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                }
+            }
+            OutlinedButton(onClick = {
+                learning.forget()
+                muted = emptyList()
+                forgotten++
+            }) { Text("Olvidar lo aprendido") }
 
             Spacer(Modifier.height(12.dp))
             Section("Modo PRO")

@@ -48,6 +48,14 @@ class AppPrefs(context: Context) {
         get() = sp.getBoolean(KEY_CRITIQUE, true)
         set(value) = sp.edit().putBoolean(KEY_CRITIQUE, value).apply()
 
+    /**
+     * Aprender de tus fotos (Fase 7): a veces prueba una versión algo distinta de la mejora y te pregunta
+     * si te gusta. Lo ya aprendido se sigue aplicando aunque se desactive.
+     */
+    var learning: Boolean
+        get() = sp.getBoolean(KEY_LEARNING, true)
+        set(value) = sp.edit().putBoolean(KEY_LEARNING, value).apply()
+
     /** En el modo PRO, guardar también el RAW (DNG) si el móvil lo permite. */
     var raw: Boolean
         get() = sp.getBoolean(KEY_RAW, false)
@@ -64,6 +72,7 @@ class AppPrefs(context: Context) {
         const val KEY_ENHANCE_GEOMETRY = "mejora_geometria"
         const val KEY_RAW = "raw"
         const val KEY_CRITIQUE = "critica"
+        const val KEY_LEARNING = "aprender"
     }
 }
 

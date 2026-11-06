@@ -130,7 +130,7 @@ fun SceneBadge(perception: Perception, reason: String?, modifier: Modifier = Mod
 
 /** Consejo del Director IA. Si tiene acción, se puede tocar. */
 @Composable
-fun TipChip(tip: Tip, onAction: () -> Unit, modifier: Modifier = Modifier) {
+fun TipChip(tip: Tip, onAction: () -> Unit, modifier: Modifier = Modifier, onMute: (() -> Unit)? = null) {
     val actionable = tip.action != null
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -144,7 +144,16 @@ fun TipChip(tip: Tip, onAction: () -> Unit, modifier: Modifier = Modifier) {
             .padding(horizontal = 12.dp, vertical = 7.dp),
     ) {
         Text("✨", fontSize = 13.sp)
-        Text(tip.text, color = Color.White, fontSize = 13.sp)
+        Text(tip.text, color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f, fill = false))
+        // ✕: no me interesa este consejo (no vuelve a salir en un mes).
+        onMute?.let { mute ->
+            Text(
+                "✕",
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 13.sp,
+                modifier = Modifier.clickable(onClick = mute).padding(start = 4.dp),
+            )
+        }
     }
 }
 

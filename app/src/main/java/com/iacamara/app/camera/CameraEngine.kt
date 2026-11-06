@@ -56,10 +56,15 @@ import com.iacamara.app.imaging.PixelRect
 import com.iacamara.app.perception.FaceDetail
 import com.iacamara.app.perception.FrameMath
 import com.iacamara.app.perception.NRect
+import com.iacamara.app.perception.SceneType
 import com.iacamara.app.perception.CaptureMetadata
 import com.iacamara.app.settings.AppPrefs
 import com.iacamara.app.settings.EnhanceMode
 import com.iacamara.app.settings.HabitBook
+import com.iacamara.app.settings.LearningBook
+import com.iacamara.app.learning.SceneGroup
+import com.iacamara.app.learning.ShotJournal
+import com.iacamara.app.learning.Variant
 import kotlinx.coroutines.asCoroutineDispatcher
 import com.iacamara.app.util.await
 import kotlinx.coroutines.CoroutineScope
@@ -167,6 +172,23 @@ data class CameraUiState(
     val rawActive: Boolean = false,
     /** Crítica del fotógrafo de la última foto (se muestra unos segundos). */
     val critique: Critique? = null,
+    /** Última copia mejorada, para que digas si te gusta (Fase 7) o null. */
+    val enhanced: EnhancedShot? = null,
+    /** Aviso informativo de unos segundos (p. ej. algo que la app ha aprendido de ti). */
+    val info: String? = null,
+)
+
+/** Una copia mejorada recién guardada y con qué versión de tu estilo se hizo (para aprender de tu opinión). */
+data class EnhancedShot(
+    val original: Uri,
+    val enhanced: Uri,
+    val group: SceneGroup,
+    val variant: Variant,
+    /** Se guardaron las dos (se pueden comparar). */
+    val bothKept: Boolean,
+    /** Para revelar versiones de prueba de la misma foto ("Afinar mi estilo"). */
+    val scene: SceneType,
+    val alreadyProcessed: Boolean,
 )
 
 /**
@@ -227,6 +249,36 @@ class CameraEngine(private val context: Context) {
     }
 
     fun clearCritique() = _state.update { it.copy(critique = null) }
+
+    /** Lo que la app aprende de ti (Fase 7). */
+    private val learning = LearningBook.get(context)
+
+    /** Tu opinión sobre la última copia mejorada: aprende de ella y avisa si tu estilo cambia. */
+    fun rateEnhancement(liked: Boolean) {
+        val e = _state.value.enhanced ?: return
+        _state.update { it.copy(enhanced = null) }
+        scope.launch(Dispatchers.Default) {
+            learning.journal.markRated(e.enhanced.toString())
+            val learned = learning.style.feedback(e.group, e.variant, liked)
+            learned?.let { learning.note(it.text) }
+            learning.save()
+            showInfo(learned?.text ?: if (liked) "¡Anotado! Te gusta así" else "Anotado: la próxima vez probaré otra cosa")
+        }
+    }
+
+    fun dismissEnhancement() = _state.update { it.copy(enhanced = null) }
+
+    fun showInfo(text: String) = _state.update { it.copy(info = text) }
+
+    fun clearInfo() = _state.update { it.copy(info = null) }
+
+    /** Mira qué copias mejoradas (o qué originales) has borrado y aprende de ello, en segundo plano. */
+    fun learnFromDeletions() {
+        scope.launch(Dispatchers.IO) {
+            val learned = runCatching { learning.checkDeleted(context.contentResolver) }.getOrNull().orEmpty()
+            learned.lastOrNull()?.let { showInfo(it.text) }
+        }
+    }
 
     /** Se debe llamar antes de start(). */
     fun setAnalyzer(analyzer: ImageAnalysis.Analyzer?) {
@@ -518,18 +570,31 @@ class CameraEngine(private val context: Context) {
         val choice = prefs.enhance
         if (shot == null || choice == EnhanceMode.NO || mode.vendor || mode == PhotoMode.PRO) return
         val geometry = prefs.enhanceGeometry
+        // Tu estilo para este tipo de foto y, a veces, una versión algo distinta para saber si te gusta más.
+        val learn = prefs.learning
+        val group = SceneGroup.of(shot.scene)
+        val variant = learning.style.choose(group, explore = learn)
+        val style = learning.style.adjust(group, variant)
         _state.update { it.copy(enhancing = it.enhancing + 1) }
         scope.launch {
             try {
                 val improved = heavyWork.withLock {
                     withContext(enhanceDispatcher) {
-                        runCatching { enhancer.enhance(original, shot, alreadyProcessed, geometry) }.getOrNull()
+                        runCatching { enhancer.enhance(original, shot, alreadyProcessed, geometry, style) }.getOrNull()
                     }
                 }
                 if (improved != null) {
-                    if (choice == EnhanceMode.SOLO_MEJORADA) withContext(Dispatchers.IO) { PhotoSaver.delete(context, original) }
-                    _state.update { it.copy(lastPhotoUri = improved) }
+                    val both = choice == EnhanceMode.AMBAS
+                    if (!both) withContext(Dispatchers.IO) { PhotoSaver.delete(context, original) }
+                    if (both) {
+                        learning.journal.add(
+                            ShotJournal.Entry(System.currentTimeMillis(), group, variant, original.toString(), improved.toString(), bothKept = true),
+                        )
+                    }
+                    val ask = if (learn && learning.style.shouldAsk()) EnhancedShot(original, improved, group, variant, both, shot.scene, alreadyProcessed) else null
+                    _state.update { it.copy(lastPhotoUri = improved, enhanced = ask ?: it.enhanced) }
                 }
+                withContext(Dispatchers.Default) { learning.save() }
             } finally {
                 _state.update { it.copy(enhancing = (it.enhancing - 1).coerceAtLeast(0)) }
             }

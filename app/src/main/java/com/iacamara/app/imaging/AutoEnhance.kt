@@ -91,8 +91,16 @@ data class ShotContext(
  */
 object AutoEnhance {
 
-    fun enhance(pixels: IntArray, width: Int, height: Int, context: ShotContext, strength: Float = 1f): IntArray {
-        var recipe = Recipe.forScene(context.scene).scaled(strength)
+    /** @param style tu estilo aprendido (Fase 7) sobre la receta de la escena. */
+    fun enhance(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        context: ShotContext,
+        strength: Float = 1f,
+        style: StyleAdjust = StyleAdjust.NONE,
+    ): IntArray {
+        var recipe = style.applyTo(Recipe.forScene(context.scene)).scaled(strength)
         if (context.alreadyProcessed) {
             // La fusión de noche/HDR ya ajustó el tono: solo color y acabado.
             recipe = recipe.copy(contrast = recipe.contrast * 0.4f, clarity = recipe.clarity * 0.5f, shadows = 0f, highlights = 0f)

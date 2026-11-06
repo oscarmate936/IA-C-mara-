@@ -43,8 +43,10 @@ internal fun loadSmallUpright(context: Context, uri: Uri, maxSide: Int): Bitmap?
             ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
         }
     }.getOrNull() ?: ExifInterface.ORIENTATION_NORMAL
+    // Solo el tamaño (con inJustDecodeBounds, decodeStream devuelve null aunque haya leído la foto).
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+    val stream = resolver.openInputStream(uri) ?: return null
+    stream.use { BitmapFactory.decodeStream(it, null, bounds) }
     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
     var sample = 1
     while (max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
