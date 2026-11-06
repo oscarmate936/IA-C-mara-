@@ -21,7 +21,8 @@ import java.nio.FloatBuffer
 /**
  * Un modelo ONNX cargado desde los assets del APK (ONNX Runtime, sin internet).
  * Empieza en el procesador normal; el [Accelerator] puede cambiarlo después al NPU o a la GPU
- * si da el mismo resultado y va más rápido.
+ * si da el mismo resultado y va más rápido. Si junto al modelo hay una versión `_int8.onnx`
+ * (cuantizada con scripts/cuantizar_npu.py), es la que se usa en el NPU de 8 bits.
  */
 class OnnxModel(context: Context, private val assetPath: String, val key: String, private val threads: Int = 4) : AutoCloseable {
     /** Una entrada real del modelo, para probar los aceleradores con imágenes de verdad. */
@@ -45,7 +46,16 @@ class OnnxModel(context: Context, private val assetPath: String, val key: String
         inputName = session.inputNames.first()
     }
 
+    private val int8Path = assetPath.removeSuffix(".onnx") + "_int8.onnx"
+
+    /** Hay versión de 8 bits para los NPU sin coma flotante. */
+    val hasInt8: Boolean = runCatching {
+        appContext.assets.list(int8Path.substringBeforeLast('/', ""))?.contains(int8Path.substringAfterLast('/')) == true
+    }.getOrDefault(false)
+
     private fun readBytes(): ByteArray = appContext.assets.open(assetPath).use { it.readBytes() }
+
+    private fun readInt8Bytes(): ByteArray = appContext.assets.open(int8Path).use { it.readBytes() }
 
     /** Ejecuta el modelo y devuelve su primera salida (arrays de Java de varias dimensiones). */
     fun runFirst(data: FloatBuffer, shape: LongArray): Any {
@@ -88,7 +98,7 @@ class OnnxModel(context: Context, private val assetPath: String, val key: String
     }
 
     fun createSession(backend: Backend, cache: File?): OrtSession =
-        Sessions.create(appContext, env, ::readBytes, backend, threads, cache)
+        Sessions.create(appContext, env, if (backend == Backend.NPU_INT8) ::readInt8Bytes else ::readBytes, backend, threads, cache)
 
     /** Cambia de acelerador entre dos ejecuciones (nunca a mitad de una). */
     fun swap(newSession: OrtSession, newBackend: Backend) {

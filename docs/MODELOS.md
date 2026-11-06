@@ -1,8 +1,9 @@
 # Modelos de IA incluidos en el APK
 
-Todos funcionan dentro del móvil, sin internet, desde `app/src/main/assets/models/` (~154 MB).
+Todos funcionan dentro del móvil, sin internet, desde `app/src/main/assets/models/` (~170 MB).
 Los modelos ONNX se regeneran con `scripts/export_models.py` (vocabulario en `scripts/yoloe_vocabulary.tsv`)
-y `scripts/export_ia_avanzada.py` (CLIP, NIMA, YOLO11s y pose).
+y `scripts/export_ia_avanzada.py` (CLIP, NIMA, YOLO11s y pose); las versiones de 8 bits para el NPU, con
+`scripts/cuantizar_npu.py`.
 
 | Archivo | Motor | Para qué sirve | Frecuencia | Licencia |
 |---|---|---|---|---|
@@ -15,6 +16,7 @@ y `scripts/export_ia_avanzada.py` (CLIP, NIMA, YOLO11s y pose).
 | `yolo11s.onnx` (38 MB) | ONNX Runtime | Detector más preciso (47,0 frente a 39,5 de precisión COCO). Solo se usa si el móvil lo ejecuta en el NPU o la GPU en ≤ 40 ms y da los mismos resultados que en el procesador | ~5/s | AGPL-3.0 (uso personal) |
 | `yoloe_vocab.onnx` (39 MB) + `yoloe_labels.tsv` | ONNX Runtime | **Opción 3.** Detector de vocabulario abierto (YOLOE-11s) con ~120 cosas habituales en fotos (estructura metálica, pila de troncos, volcán, farola…). Da nombre a lo que YOLO11 no conoce, anula sus confusiones y nombra lo que distrae en los bordes | ~1/s | AGPL-3.0 (uso personal) |
 | `u2netp.onnx` (4,6 MB) | ONNX Runtime | **Opción 1.** Saliencia (U²-Net pequeño): encuentra "lo importante" de la imagen aunque no tenga nombre y mide lo que distrae en los bordes | ~1–2/s | Apache 2.0 |
+| `u2netp_int8.onnx` (3,4 MB), `yolo11n_int8.onnx` (3,3 MB), `yolo11s_int8.onnx` (10,2 MB) | ONNX Runtime (QNN) | Los mismos modelos en enteros de 8 bits, **solo para el NPU** de los Snapdragon que no admiten coma flotante (el Snapdragon 6 Gen 4 del Honor). Solo se prueban si el NPU normal falla | — | Las del original |
 
 Notas:
 
@@ -29,6 +31,16 @@ Notas:
   imagen en la que detecten algo (si no, un acelerador roto "coincidiría"). Se prueban primero los modelos más lentos.
   El panel 📊 muestra dónde corre cada modelo (NPU, GPU o CPU), cuánto tarda y qué se está probando; el informe de
   Diagnóstico (ⓘ → Copiar) incluye la sección «ACELERACIÓN» con los tiempos medidos y el motivo de cada descarte.
+- **NPU de 8 bits (Honor y otros gama media).** El NPU del Snapdragon 6 Gen 4 (SM6650) no admite coma flotante
+  («The SocModel doesn't support FP16»): los modelos normales fallan al compilarse para él. Para esos chips van copias
+  cuantizadas a 8 bits (QDQ, pesos por canal, calibradas con fotos reales) de U²-Net, YOLO11n y YOLO11s. La app
+  las prueba **solo si el NPU normal falla** y con la misma comprobación que el resto (mismo resultado que el
+  procesador con una imagen real; la saliencia, solo con imágenes en las que algo destaca). En el diagnóstico salen
+  como «NPU 8 bits». Para que U²-Net funcione en 8 bits, `cuantizar_npu.py` pasa al sesgo dos canales que valen ~226
+  en toda la imagen (con una corrección exacta en el borde) y deja en coma flotante la decodificación de cajas y el NMS
+  de YOLO. Comprobación con imágenes que no se usaron para calibrar: U²-Net coincide en 38/38 (coseno ≥ 0,979),
+  YOLO11n en 20/20 y YOLO11s en 21/21. NIMA y YOLOE no pasan (el error se acumula capa a capa) y se quedan en el
+  procesador; CLIP tampoco tiene versión de 8 bits para el NPU.
 - Las librerías de Qualcomm (`com.qualcomm.qti:qnn-runtime`) solo incluyen las de los chips Hexagon V69 (Snapdragon
   8 Gen 1), V73, V75 y V79; añaden ~53 MB al APK.
 

@@ -74,7 +74,8 @@ jobs:
             exit 1
           fi
           for m in blaze_face_short_range.tflite face_landmarker.task pose_landmarker_lite.task \
-                   yolo11n.onnx yolo11s.onnx yoloe_vocab.onnx u2netp.onnx clip_image.onnx nima_aesthetic.onnx; do
+                   yolo11n.onnx yolo11s.onnx yoloe_vocab.onnx u2netp.onnx clip_image.onnx nima_aesthetic.onnx \
+                   u2netp_int8.onnx yolo11n_int8.onnx yolo11s_int8.onnx; do
             unzip -v out/IA-Camara.apk "assets/models/$m" | grep -q " Stored " || { echo "::error::El modelo $m falta o está comprimido"; exit 1; }
           done
           for f in yolo11n_labels.txt yoloe_labels.tsv clip_scenes.bin clip_scenes.tsv; do

@@ -213,7 +213,11 @@ class PerceptionAnalyzer(
         val detections = { a: Any, b: Any -> OutputCheck.sameDetections(a, b) }
         val hasDetections = { out: Any -> OutputCheck.hasDetections(out) }
         saliencyModel?.let {
-            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.similar(a, b, 0.95f) }) { _, _ -> updateActive() })
+            accelerator.optimize(
+                Accelerator.Job(it, { a, b -> OutputCheck.similar(a, b, 0.95f) }, informative = { out -> OutputCheck.hasSalience(out) }) { _, _ ->
+                    updateActive()
+                },
+            )
         }
         yoloeModel?.let {
             accelerator.optimize(Accelerator.Job(it, detections, informative = hasDetections) { _, _ -> updateActive() })

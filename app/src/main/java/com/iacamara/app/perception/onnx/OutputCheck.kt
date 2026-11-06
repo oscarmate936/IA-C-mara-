@@ -43,6 +43,12 @@ object OutputCheck {
         return cosine(a, b) >= minCosine
     }
 
+    /**
+     * Un mapa de saliencia sirve para comparar si algo destaca (algún valor ≥ `minPeak`). Si todo es
+     * casi cero (una pared lisa, la mano tapando la cámara), el coseno solo compara ruido.
+     */
+    fun hasSalience(output: Any, minPeak: Float = 0.2f): Boolean = flatten(output).any { it >= minPeak }
+
     /** Distribución de notas (NIMA): la nota media no puede moverse más de `maxDiff`. */
     fun sameMeanScore(reference: Any, candidate: Any, maxDiff: Float = 0.15f): Boolean {
         val a = flatten(reference)

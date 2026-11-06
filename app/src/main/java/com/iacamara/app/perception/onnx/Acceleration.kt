@@ -15,12 +15,21 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** Dónde se ejecuta un modelo. */
 enum class Backend(val label: String) {
-    /** Chip de IA del Snapdragon (Hexagon), con Qualcomm AI Engine Direct (QNN). */
+    /** Chip de IA del Snapdragon (Hexagon), con Qualcomm AI Engine Direct (QNN), en coma flotante de 16 bits. */
     NPU("NPU"),
+    /**
+     * El mismo chip con la versión del modelo en enteros de 8 bits: para los NPU de gama media que no
+     * admiten coma flotante (p. ej. Snapdragon 6 Gen 4). Solo se prueba si el NPU normal no funciona.
+     */
+    NPU_INT8("NPU 8 bits"),
     /** Gráfica Adreno, con QNN. */
     GPU("GPU"),
     /** Procesador normal: siempre funciona. */
     CPU("CPU"),
+    ;
+
+    /** Se ejecuta en el NPU (y guarda su grafo compilado). */
+    val npu: Boolean get() = this == NPU || this == NPU_INT8
 }
 
 /**
@@ -121,11 +130,12 @@ class AcceleratorStore private constructor(context: Context) {
             }
             if (times.isNotEmpty()) append(" (").append(times.joinToString(", ")).append(')')
             append('\n')
-            for (b in listOf(Backend.NPU, Backend.GPU)) {
+            for (b in listOf(Backend.NPU, Backend.NPU_INT8, Backend.GPU)) {
                 error(key, b)?.let { append("   ").append(b.label).append(" descartado: ").append(it).append('\n') }
             }
         }
-        append("(YOLO11s solo se usa si va en el NPU o la GPU en 40 ms o menos.)\n")
+        append("(YOLO11s solo se usa si va en el NPU o la GPU en 40 ms o menos. «NPU 8 bits»: versión en enteros ")
+        append("para los NPU que no admiten coma flotante; solo se prueba si el NPU normal falla.)\n")
     }
 
     /** Cámara abierta con algún modelo acelerado (true) o cerrada/en segundo plano (false). */
@@ -178,7 +188,7 @@ object Sessions {
     ): OrtSession {
         if (backend != Backend.CPU) configureDsp(context)
         // NPU: el grafo compilado para el chip se guarda para no recompilarlo en cada arranque.
-        if (backend == Backend.NPU && cache != null && cache.exists()) {
+        if (backend.npu && cache != null && cache.exists()) {
             try {
                 return options(backend, threads).use { env.createSession(cache.path, it) }
             } catch (e: Throwable) {
@@ -187,7 +197,7 @@ object Sessions {
             }
         }
         return options(backend, threads).use { o ->
-            if (backend == Backend.NPU && cache != null) {
+            if (backend.npu && cache != null) {
                 o.addConfigEntry("ep.context_enable", "1")
                 o.addConfigEntry("ep.context_embed_mode", "1")
                 o.addConfigEntry("ep.context_file_path", cache.path)
@@ -201,14 +211,15 @@ object Sessions {
             setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
             when (backend) {
                 Backend.CPU -> setIntraOpNumThreads(threads)
-                Backend.NPU -> {
+                Backend.NPU, Backend.NPU_INT8 -> {
                     // Lo que el chip no sepa hacer se ejecuta en el procesador.
                     setIntraOpNumThreads(2)
                     addQnn(
                         mapOf(
                             "backend_type" to "htp",
                             "htp_performance_mode" to "sustained_high_performance",
-                            "enable_htp_fp16_precision" to "1",
+                            // El modelo de 8 bits ya trae la cuantización (QDQ): no se pide coma flotante.
+                            "enable_htp_fp16_precision" to if (backend == Backend.NPU) "1" else "0",
                             "htp_graph_finalization_optimization_mode" to "3",
                         ),
                     )
@@ -341,9 +352,12 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
 
         var best: Pair<Backend, OrtSession>? = null
         var bestMs = cpuMs
-        for (backend in listOf(Backend.NPU, Backend.GPU)) {
+        var npuWorks = false
+        for (backend in listOf(Backend.NPU, Backend.NPU_INT8, Backend.GPU)) {
             if (closed) break
             if (store.isBroken(m.key, backend)) continue
+            // La versión de 8 bits es para los NPU sin coma flotante: si el normal funciona, sobra.
+            if (backend == Backend.NPU_INT8 && (npuWorks || !m.hasInt8)) continue
             probingNow = "${m.key} ${backend.label}"
             val result = runCatching {
                 store.guarded(m.key, backend) {
@@ -363,6 +377,7 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
                 store.markBroken(m.key, backend, describe(e))
             }
             val (session, ms) = result.getOrNull() ?: continue
+            if (backend == Backend.NPU) npuWorks = true
             store.recordMs(m.key, backend, ms)
             if (ms < bestMs * 0.85f && job.accept(backend, ms, cpuMs)) {
                 best?.second?.close()
@@ -399,7 +414,7 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
     }
 
     private fun create(m: OnnxModel, backend: Backend): OrtSession {
-        val cache = if (backend == Backend.NPU) File(store.cacheDir, "${m.key}.onnx") else null
+        val cache = if (backend.npu) File(store.cacheDir, "${m.key}_${backend.name}.onnx") else null
         return try {
             m.createSession(backend, cache)
         } catch (e: Throwable) {

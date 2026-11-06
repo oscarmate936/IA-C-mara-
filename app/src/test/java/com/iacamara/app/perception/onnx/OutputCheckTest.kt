@@ -55,6 +55,15 @@ class OutputCheckTest {
     }
 
     @Test
+    fun mapaDeSalienciaPlanoNoSirveParaComparar() {
+        // [1][1][alto][ancho], como la salida de U²-Net.
+        val flat = arrayOf(arrayOf(Array(4) { FloatArray(4) { 0.01f } }))
+        val subject = arrayOf(arrayOf(Array(4) { y -> FloatArray(4) { x -> if (x in 1..2 && y in 1..2) 0.9f else 0.02f } }))
+        assertFalse(OutputCheck.hasSalience(flat))
+        assertTrue(OutputCheck.hasSalience(subject))
+    }
+
+    @Test
     fun notaMediaDeNima() {
         val p = FloatArray(10).also { it[4] = 0.5f; it[5] = 0.5f } // notas 5 y 6 → 5,5
         assertEquals(5.5f, OutputCheck.meanScore(p), 1e-5f)
