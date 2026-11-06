@@ -352,26 +352,27 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
 
         var best: Pair<Backend, OrtSession>? = null
         var bestMs = cpuMs
-        var npuWorks = false
+        // El NPU normal se pudo ejecutar (aunque diera otro resultado): entonces admite coma flotante.
+        var npuRuns = false
         for (backend in listOf(Backend.NPU, Backend.NPU_INT8, Backend.GPU)) {
             if (closed) break
-            if (store.isBroken(m.key, backend)) continue
+            if (store.isBroken(m.key, backend)) {
+                if (backend == Backend.NPU && store.error(m.key, backend)?.contains(MISMATCH) == true) npuRuns = true
+                continue
+            }
             // La versión de 8 bits es para los NPU sin coma flotante: si el normal funciona, sobra.
-            if (backend == Backend.NPU_INT8 && (npuWorks || !m.hasInt8)) continue
+            if (backend == Backend.NPU_INT8 && (npuRuns || !m.hasInt8)) continue
             probingNow = "${m.key} ${backend.label}"
             val result = runCatching {
                 store.guarded(m.key, backend) {
                     val s = create(m, backend)
                     try {
                         val out = m.runSample(s, sample) // la primera vez también compila
-                        if (backend == Backend.NPU_INT8) {
-                            // En 8 bits los resultados se desvían algo más en algunas imágenes (muy oscuras,
-                            // con detecciones justas): se exige que coincida en la mayoría de 3 imágenes.
-                            val passes = agreementOf(job, s, job.check(reference, out))
-                            check(passes >= 2) { "resultado distinto del procesador normal ($passes de 3 imágenes)" }
-                        } else {
-                            check(job.check(reference, out)) { "resultado distinto del procesador normal" }
-                        }
+                        if (backend == Backend.NPU) npuRuns = true
+                        // Una sola imagen engaña (niebla, noche, detecciones justas): tiene que coincidir en la
+                        // mayoría de 3 imágenes reales.
+                        val passes = agreementOf(job, s, job.check(reference, out))
+                        check(passes >= 2) { "$MISMATCH ($passes de 3 imágenes)" }
                         s to measure { m.runSample(s, sample) }
                     } catch (e: Throwable) {
                         s.close()
@@ -384,7 +385,6 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
                 store.markBroken(m.key, backend, describe(e))
             }
             val (session, ms) = result.getOrNull() ?: continue
-            if (backend == Backend.NPU) npuWorks = true
             store.recordMs(m.key, backend, ms)
             if (ms < bestMs * 0.85f && job.accept(backend, ms, cpuMs)) {
                 best?.second?.close()
@@ -485,6 +485,9 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
     private companion object {
         const val TAG = "Aceleracion"
         const val SAMPLE_TIMEOUT_MS = 120_000L
+
+        /** Motivo de descarte cuando el acelerador funciona pero no da lo mismo que el procesador. */
+        const val MISMATCH = "resultado distinto del procesador normal"
 
         /** Tiempo que se espera una imagen útil antes de pasar al siguiente modelo y volver luego. */
         const val INFORMATIVE_TIMEOUT_MS = 25_000L

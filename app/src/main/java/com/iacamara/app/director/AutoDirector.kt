@@ -132,7 +132,7 @@ class DirectorSession {
                 p.scene == SceneType.SELFIE -> Tip("Selfie: sostén el móvil un poco por encima de tus ojos")
                 p.scene == SceneType.GRUPO -> Tip("Grupo: que todos estén a la misma distancia de la cámara")
                 Condition.MOVIMIENTO in c -> Tip("Sujeto en movimiento: dispara en ráfaga con el volumen")
-                p.scene == SceneType.MASCOTA -> Tip("Mascota: baja a la altura de sus ojos")
+                p.scene == SceneType.MASCOTA -> Tip("Animal: baja a la altura de sus ojos")
                 p.scene == SceneType.COMIDA -> Tip("Comida: prueba desde arriba (cenital) o a 45°, con luz de ventana")
                 p.scene == SceneType.NOCHE -> Tip("Noche: mantén el móvil quieto al disparar")
                 p.scene == SceneType.ATARDECER -> Tip("Atardecer: pon el sol en un punto fuerte de la rejilla")

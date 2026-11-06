@@ -150,4 +150,12 @@ class TaskClock(private val baseMs: Long, private val factor: Float) {
     fun reset() {
         lastRunMs = 0L
     }
+
+    /**
+     * Olvida la duración media (p. ej. al pasar el modelo al NPU): si no, durante un rato se seguiría
+     * programando como si fuera lento y el panel mostraría el tiempo antiguo.
+     */
+    fun resetAverage() {
+        averageMs = 0f
+    }
 }

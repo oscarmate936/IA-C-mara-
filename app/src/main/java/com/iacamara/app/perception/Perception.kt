@@ -39,7 +39,7 @@ enum class SceneType(val label: String, val emoji: String) {
     RETRATO("Retrato", "👤"),
     GRUPO("Grupo", "👥"),
     SELFIE("Selfie", "🤳"),
-    MASCOTA("Mascota", "🐾"),
+    MASCOTA("Animal", "🐾"),
     COMIDA("Comida", "🍽️"),
     FLORES("Flores", "🌸"),
     MACRO("Macro", "🔍"),

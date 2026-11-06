@@ -147,7 +147,7 @@ object ExpertRules {
                 "angulo.mascota", 0.55f,
                 listOf(
                     "Baja a la altura de sus ojos: la foto ganará mucho",
-                    "Agáchate: las mascotas se ven mejor a su altura",
+                    "Agáchate: los animales se ven mejor a su altura",
                 ),
             )
         }

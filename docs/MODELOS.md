@@ -27,8 +27,10 @@ Notas:
   compilado para el NPU se guarda para no recompilarlo. Los modelos de MediaPipe (ojos y cuerpo) intentan la GPU.
   Si el controlador de un chip cierra la app durante la prueba, al volver a abrirla ese acelerador queda descartado;
   si se cierra de golpe dos veces seguidas con la cámara abierta, se desactiva la aceleración. Para que la comparación
-  sea justa, mientras se mide la velocidad el visor pausa los demás modelos; los detectores solo se comparan con una
-  imagen en la que detecten algo (si no, un acelerador roto "coincidiría"). Se prueban primero los modelos más lentos.
+  sea justa, mientras se mide la velocidad el visor pausa los demás modelos; los detectores solo se comparan con
+  imágenes en las que detecten algo claro (puntuación ≥ 0,45: las detecciones dudosas aparecen y desaparecen con
+  cualquier diferencia mínima de precisión, sobre todo con niebla o de noche), y cada acelerador tiene que coincidir
+  en 2 de 3 imágenes reales. La versión de 8 bits solo se prueba si el NPU normal no llega a ejecutarse. Se prueban primero los modelos más lentos.
   El panel 📊 muestra dónde corre cada modelo (NPU, GPU o CPU), cuánto tarda y qué se está probando; el informe de
   Diagnóstico (ⓘ → Copiar) incluye la sección «ACELERACIÓN» con los tiempos medidos y el motivo de cada descarte.
 - **NPU de 8 bits (Honor y otros gama media).** El NPU del Snapdragon 6 Gen 4 (SM6650) no admite coma flotante

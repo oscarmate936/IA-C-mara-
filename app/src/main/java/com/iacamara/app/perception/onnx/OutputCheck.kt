@@ -15,8 +15,10 @@ object OutputCheck {
      * Detectores con NMS incluido: salida [1][N][6+] = x1, y1, x2, y2, puntuación, clase.
      * Cada detección clara del procesador normal tiene que aparecer en el acelerador (misma clase,
      * casi la misma caja y puntuación), y el acelerador no puede inventarse detecciones claras.
+     * Solo cuentan las claras (≥ [CLEAR]): una dudosa, cerca del umbral del detector, aparece o desaparece
+     * con cualquier diferencia mínima de precisión (con niebla, de noche) y no dice nada del acelerador.
      */
-    fun sameDetections(reference: Any, candidate: Any, minScore: Float = 0.3f): Boolean {
+    fun sameDetections(reference: Any, candidate: Any, minScore: Float = CLEAR): Boolean {
         val ref = rows(reference).filter { it[4] >= minScore }
         val out = rows(candidate)
         val strongOut = out.count { it[4] >= minScore + 0.15f }
@@ -33,7 +35,10 @@ object OutputCheck {
     }
 
     /** La salida de un detector sirve para comparar si tiene al menos una detección clara. */
-    fun hasDetections(output: Any, minScore: Float = 0.3f): Boolean = rows(output).any { it[4] >= minScore }
+    fun hasDetections(output: Any, minScore: Float = CLEAR): Boolean = rows(output).any { it[4] >= minScore }
+
+    /** Puntuación a partir de la cual una detección es clara (para comparar aceleradores). */
+    const val CLEAR = 0.45f
 
     /** Salidas densas (mapas, vectores): misma "forma" según el coseno entre ambas. */
     fun similar(reference: Any, candidate: Any, minCosine: Float): Boolean {

@@ -26,6 +26,16 @@ class OutputCheckTest {
     }
 
     @Test
+    fun unaDeteccionDudosaQueDesapareceNoCuenta() {
+        // Con niebla: el caballo claro y algo dudoso (0,33) que en el NPU baja del umbral del detector.
+        val weak = floatArrayOf(10f, 10f, 40f, 40f, 0.33f, 2f)
+        val npu = detections(floatArrayOf(101f, 51f, 199f, 302f, 0.86f, 0f))
+        assertTrue(OutputCheck.sameDetections(detections(person, weak), npu))
+        // Pero perder una detección clara sí cuenta.
+        assertFalse(OutputCheck.sameDetections(detections(person, dog), npu))
+    }
+
+    @Test
     fun claseDistintaNoVale() {
         val wrong = detections(person, floatArrayOf(250f, 200f, 350f, 300f, 0.7f, 17f))
         assertFalse(OutputCheck.sameDetections(detections(person, dog), wrong))

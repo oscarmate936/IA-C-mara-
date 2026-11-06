@@ -215,29 +215,33 @@ class PerceptionAnalyzer(
     private fun startAcceleration() {
         val detections = { a: Any, b: Any -> OutputCheck.sameDetections(a, b) }
         val hasDetections = { out: Any -> OutputCheck.hasDetections(out) }
+        // Al cambiar de acelerador, el reloj del modelo olvida su duración media (si no, se seguiría
+        // programando como si fuera lento hasta que la media bajara).
+        fun accelerated(clock: TaskClock) = { backend: Backend, _: Float ->
+            if (backend != Backend.CPU) clock.resetAverage()
+            updateActive()
+        }
         saliencyModel?.let {
             accelerator.optimize(
-                Accelerator.Job(it, { a, b -> OutputCheck.similar(a, b, 0.95f) }, informative = { out -> OutputCheck.hasSalience(out) }) { _, _ ->
-                    updateActive()
-                },
+                Accelerator.Job(it, { a, b -> OutputCheck.similar(a, b, 0.95f) }, informative = { out -> OutputCheck.hasSalience(out) }, onDone = accelerated(saliencyClock)),
             )
         }
         yoloeModel?.let {
-            accelerator.optimize(Accelerator.Job(it, detections, informative = hasDetections) { _, _ -> updateActive() })
+            accelerator.optimize(Accelerator.Job(it, detections, informative = hasDetections, onDone = accelerated(yoloeClock)))
         }
         yoloModel?.let { model ->
             accelerator.optimize(
-                Accelerator.Job(model, detections, informative = hasDetections) { backend, _ ->
-                    updateActive()
+                Accelerator.Job(model, detections, informative = hasDetections) { backend, ms ->
+                    accelerated(yoloClock)(backend, ms)
                     if (backend != Backend.CPU) tryBiggerDetector(model)
                 },
             )
         }
         aestheticModel?.let {
-            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.sameMeanScore(a, b) }) { _, _ -> updateActive() })
+            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.sameMeanScore(a, b) }, onDone = accelerated(aestheticClock)))
         }
         clipModel?.let {
-            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.similar(a, b, 0.98f) }) { _, _ -> updateActive() })
+            accelerator.optimize(Accelerator.Job(it, { a, b -> OutputCheck.similar(a, b, 0.98f) }, onDone = accelerated(labelsClock)))
         }
     }
 
@@ -267,6 +271,7 @@ class PerceptionAnalyzer(
             return
         }
         onnxModels += big
+        yoloClock.resetAverage()
         yolo = YoloDetector(big, 512, yoloLabels)
         yoloModel = big
         yoloName = "YOLO11s"
