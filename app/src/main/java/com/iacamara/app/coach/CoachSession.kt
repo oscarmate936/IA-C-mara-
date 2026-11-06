@@ -10,6 +10,8 @@ data class CoachTip(
     val action: TipAction? = null,
     val habit: HabitCount? = null,
     val mutable: Boolean = false,
+    /** Importancia (0–1, con lo que suman tus hábitos): para mostrar solo los importantes si lo prefieres. */
+    val priority: Float = 0f,
 )
 
 /**
@@ -92,7 +94,7 @@ class CoachSession(
         val habit = chosen.habit?.let { counts[it] }
         val text = if (habit != null) "${habit.habit.reminder} (${habit.text}). $base" else base
         val mutable = tips != null && TipLearner.learnable(chosen.id)
-        return CoachTip(chosen.id, text, chosen.action, habit, mutable).also { lastTip = it }
+        return CoachTip(chosen.id, text, chosen.action, habit, mutable, currentPriority).also { lastTip = it }
     }
 
     /** Has disparado: si había un consejo en pantalla, no lo seguiste; y se anota qué salió al encuadrar. */

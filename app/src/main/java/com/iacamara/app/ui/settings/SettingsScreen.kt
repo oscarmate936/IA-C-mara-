@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import com.iacamara.app.settings.AppPrefs
 import com.iacamara.app.settings.EnhanceMode
 import com.iacamara.app.settings.HabitBook
+import com.iacamara.app.settings.TipsMode
 import com.iacamara.app.settings.LearningBook
 import com.iacamara.app.learning.TipLearner
 import java.text.SimpleDateFormat
@@ -56,6 +57,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
     var geometry by remember { mutableStateOf(prefs.enhanceGeometry) }
     var raw by remember { mutableStateOf(prefs.raw) }
     var critique by remember { mutableStateOf(prefs.critique) }
+    var tips by remember { mutableStateOf(prefs.tips) }
     val habitBook = remember { HabitBook.get(context.applicationContext) }
     var habits by remember { mutableStateOf(habitBook.active()) }
     val learning = remember { LearningBook.get(context.applicationContext) }
@@ -149,6 +151,29 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
                     critique = it
                     prefs.critique = it
                 })
+            }
+            Spacer(Modifier.height(4.dp))
+            Text("Consejos en el visor", color = Color.White, fontSize = 15.sp)
+            TipsMode.entries.forEach { mode ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            tips = mode
+                            prefs.tips = mode
+                        }
+                        .padding(vertical = 2.dp),
+                ) {
+                    RadioButton(selected = tips == mode, onClick = {
+                        tips = mode
+                        prefs.tips = mode
+                    })
+                    Column {
+                        Text(mode.label, color = Color.White, fontSize = 15.sp)
+                        Text(mode.description, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                    }
+                }
             }
             Spacer(Modifier.height(4.dp))
             Text("Tus hábitos", color = Color.White, fontSize = 15.sp)

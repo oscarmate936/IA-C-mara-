@@ -279,6 +279,8 @@ class PerceptionAnalyzer(
      */
     private fun tryBiggerDetector(small: OnnxModel) {
         if (acceleratorStore.chosen(YOLO_S_KEY) == Backend.CPU) return
+        // Con calor no: es una mejora (más precisión), no algo que enfríe; se intenta en otro arranque.
+        if (hot) return
         val big = runCatching { OnnxModel(appContext, YOLO_S_MODEL, YOLO_S_KEY) }.getOrNull() ?: return
         accelerator.optimize(
             Accelerator.Job(
@@ -390,6 +392,20 @@ class PerceptionAnalyzer(
         // Mientras se mide la velocidad de un acelerador (unos segundos), los modelos esperan y se usa
         // su último resultado: así la comparación es justa.
         val paused = accelerator.measuring
+
+        // Lo que dejó de ejecutarse por el calor no puede seguir valiendo (si no, el coach hablaría de cosas
+        // que ya no están: «"Piscina" distrae en el borde» con el móvil apuntando a otro sitio).
+        if (hot) {
+            lastOpenVocab = emptyList()
+            lastPose = null
+            lastAesthetic = null
+        }
+        if (critical) {
+            lastSaliencyGrid = null
+            lastSaliencyRaw = null
+            lastStructure = null
+            lastSceneScores = emptyMap()
+        }
 
         // Caras: casi en cada fotograma. Solo cuentan cuando se confirman (más abajo).
         val detector = faceDetector

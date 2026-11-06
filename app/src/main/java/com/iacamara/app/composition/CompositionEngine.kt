@@ -96,6 +96,9 @@ data class Guidance(
  */
 object CompositionEngine {
 
+    /** Seguridad mínima del detector para decir el nombre de lo que distrae en un borde. */
+    private const val NAME_MIN_SCORE = 0.45f
+
     private const val THIRD = 1f / 3f
 
     /** A partir de este giro (grados) se entiende que la inclinación es a propósito (plano holandés). */
@@ -629,8 +632,9 @@ object CompositionEngine {
     /** Nombre del objeto (vocabulario abierto) que está en ese borde, si se conoce. */
     private fun namedInBorder(sideIndex: Int, input: CompositionInput, subject: NRect?): String? {
         val band = 0.15f
+        // Un nombre equivocado («Piscina» en el cielo) es peor que «Algo»: solo con bastante seguridad.
         return input.namedObjects
-            .filter { it.score >= 0.3f }
+            .filter { it.score >= NAME_MIN_SCORE }
             .map { it to toViewRect(it.box, input) }
             .filter { (_, r) -> subject == null || r.iou(subject) < 0.3f }
             .filter { (_, r) ->

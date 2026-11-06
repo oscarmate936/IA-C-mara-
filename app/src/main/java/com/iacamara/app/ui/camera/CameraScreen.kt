@@ -165,6 +165,7 @@ fun CameraScreen(session: CameraSession, onOpenSettings: () -> Unit) {
     }
     val guideStabilizer = remember { GuideStyleStabilizer() }
     var smartShutter by remember { mutableStateOf(prefs.smartShutter) }
+    val tipsMode = remember { prefs.tips }
     // Fotógrafo veterano (Fase 6): un consejo cada vez, crítica de la última foto y explicación de la técnica.
     // Fase 7: lo aprendido de ti (consejos silenciados, la frase que te funciona, lo que ya dominas).
     val coach = remember { CoachSession(LearningBook.get(context).tips) }
@@ -509,7 +510,7 @@ fun CameraScreen(session: CameraSession, onOpenSettings: () -> Unit) {
     }
     LaunchedEffect(state.critique, critiqueExpanded) {
         if (state.critique != null && !critiqueExpanded) {
-            delay(15000)
+            delay(CRITIQUE_MS)
             engine.clearCritique()
         }
     }
@@ -700,6 +701,9 @@ fun CameraScreen(session: CameraSession, onOpenSettings: () -> Unit) {
                             }
                         }
                         if (state.enhancing > 0) InfoChip("✨ Mejorando…")
+                        if (iaActive && currentPerception?.thermalLimited == true) {
+                            InfoChip("🌡 IA reducida", onClick = { explanation = HOT_TEXT })
+                        }
                         if (state.rawActive) InfoChip("RAW + JPEG")
                     }
                     if (iaActive && currentPerception != null) {
@@ -707,9 +711,7 @@ fun CameraScreen(session: CameraSession, onOpenSettings: () -> Unit) {
                     }
                     explanation?.let { SmallNotice("¿Por qué? $it") }
                     if (iaEnabled && state.ready && !state.analysisActive) SmallNotice("IA en pausa en este modo")
-                    if (iaActive && currentPerception?.thermalLimited == true) {
-                        SmallNotice("🌡 Móvil muy caliente: IA reducida para que se enfríe")
-                    }
+
                     iaError?.let { error -> SmallNotice(error) }
                 }
                 Column(
@@ -788,13 +790,33 @@ fun CameraScreen(session: CameraSession, onOpenSettings: () -> Unit) {
                         engine.clearInfo()
                     }
                 }
-                state.enhanced?.let { shot ->
-                    EnhanceCard(
-                        shot = shot,
+                // Después de una foto, una sola tarjeta compacta: la crítica (una línea) con el 👍/👎 de la mejora
+                // dentro; si no hay crítica, solo la línea de la mejora.
+                val enhanced = state.enhanced
+                val enhanceActions = enhanced?.let { shot ->
+                    EnhanceActions(
                         onRate = { liked -> engine.rateEnhancement(liked) },
-                        onCompare = { comparing = shot },
+                        onCompare = if (shot.bothKept) ({ comparing = shot }) else null,
                         onClose = { engine.dismissEnhancement() },
                     )
+                }
+                val critique = state.critique
+                if (critique != null) {
+                    CritiqueCard(
+                        critique = critique,
+                        expanded = critiqueExpanded,
+                        onToggle = { critiqueExpanded = !critiqueExpanded },
+                        onClose = {
+                            critiqueExpanded = false
+                            engine.clearCritique()
+                            engine.dismissEnhancement()
+                        },
+                        enhance = enhanceActions,
+                    )
+                } else if (enhanceActions != null) {
+                    EnhanceCard(enhanceActions)
+                }
+                enhanced?.let { shot ->
                     // Si no dices nada, la pregunta se va sola al cabo de un rato.
                     LaunchedEffect(shot) {
                         delay(ENHANCE_ASK_MS)
@@ -822,41 +844,29 @@ fun CameraScreen(session: CameraSession, onOpenSettings: () -> Unit) {
                         engine.showInfo(learned ?: "Anotado: seguiré afinando tu estilo con tus elecciones")
                     }
                 }
-                state.critique?.let { critique ->
-                    CritiqueCard(
-                        critique = critique,
-                        expanded = critiqueExpanded,
-                        onToggle = { critiqueExpanded = !critiqueExpanded },
-                        onClose = {
-                            critiqueExpanded = false
-                            engine.clearCritique()
+                // El consejo del fotógrafo veterano (el más importante entre encuadre, Director y reglas de
+                // experto). Mientras está la tarjeta de la última foto no sale: no se apilan.
+                val afterShot = critique != null || enhanced != null
+                val tip = coachTip?.takeIf { tipsMode.shows(it.priority) }
+                if (iaActive && !afterShot && tip != null) {
+                    TipChip(
+                        tip = Tip(tip.text, tip.action),
+                        onAction = {
+                            when (val action = tip.action) {
+                                is TipAction.SwitchMode -> engine.setMode(action.mode)
+                                is TipAction.SetZoom -> engine.setZoom(action.ratio)
+                                null -> Unit
+                            }
+                        },
+                        onMute = if (tip.mutable) {
+                            {
+                                coach.muteCurrent()?.let { engine.showInfo("Vale, no te lo diré en un mes (se puede deshacer en Ajustes)") }
+                                coachTip = null
+                            }
+                        } else {
+                            null
                         },
                     )
-                }
-                // Con la crítica desplegada no se muestra el consejo (no se tapan).
-                if (iaActive && !(state.critique != null && critiqueExpanded)) {
-                    // El consejo del fotógrafo veterano: el más importante entre encuadre, Director y reglas de experto.
-                    val tipToShow = coachTip?.let { Tip(it.text, it.action) }
-                    tipToShow?.let { tip ->
-                        TipChip(
-                            tip = tip,
-                            onAction = {
-                                when (val action = tip.action) {
-                                    is TipAction.SwitchMode -> engine.setMode(action.mode)
-                                    is TipAction.SetZoom -> engine.setZoom(action.ratio)
-                                    null -> Unit
-                                }
-                            },
-                            onMute = if (coachTip?.mutable == true) {
-                                {
-                                    coach.muteCurrent()?.let { engine.showInfo("Vale, no te lo diré en un mes (se puede deshacer en Ajustes)") }
-                                    coachTip = null
-                                }
-                            } else {
-                                null
-                            },
-                        )
-                    }
                 }
                 ZoomBar(
                     zoom = state.zoomRatio,
@@ -955,11 +965,17 @@ private const val MANUAL_FOCUS_HOLD_MS = 6000L
 /** Aviso si se intenta salir del visor mientras se hace una foto. */
 private const val WAIT_TEXT = "Un momento: estoy terminando la foto"
 
+/** Explicación de la etiqueta de calor. */
+private const val HOT_TEXT = "El móvil está muy caliente: la IA usa menos modelos hasta que se enfríe (sol directo o mucho uso)"
+
+/** Lo que dura la crítica plegada (desplegada se queda hasta que la cierras). */
+private const val CRITIQUE_MS = 10_000L
+
 /** Lo que dura en pantalla un aviso de lo aprendido. */
 private const val INFO_MS = 4000L
 
 /** Lo que espera la pregunta "¿te gusta la mejora?" antes de irse sola. */
-private const val ENHANCE_ASK_MS = 25_000L
+private const val ENHANCE_ASK_MS = 15_000L
 
 /** Recuerda qué enfoque automático se ha aplicado para no repetirlo en cada fotograma. */
 private class AutoFocusState {

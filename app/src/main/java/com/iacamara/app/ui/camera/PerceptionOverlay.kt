@@ -32,6 +32,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iacamara.app.director.Tip
@@ -132,25 +133,34 @@ fun SceneBadge(perception: Perception, reason: String?, modifier: Modifier = Mod
 @Composable
 fun TipChip(tip: Tip, onAction: () -> Unit, modifier: Modifier = Modifier, onMute: (() -> Unit)? = null) {
     val actionable = tip.action != null
+    // Compacto y semitransparente: como mucho dos líneas, para tapar lo menos posible la escena.
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
         modifier = modifier
-            .widthIn(max = 320.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color.Black.copy(alpha = 0.62f))
-            .border(1.dp, if (actionable) Amber else Color.Transparent, RoundedCornerShape(12.dp))
+            .widthIn(max = 300.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.Black.copy(alpha = 0.45f))
+            .border(1.dp, if (actionable) Amber else Color.Transparent, RoundedCornerShape(10.dp))
             .clickable(enabled = actionable, onClick = onAction)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .padding(horizontal = 9.dp, vertical = 4.dp),
     ) {
-        Text("✨", fontSize = 13.sp)
-        Text(tip.text, color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f, fill = false))
+        Text("✨", fontSize = 11.sp)
+        Text(
+            tip.text,
+            color = Color.White,
+            fontSize = 11.sp,
+            lineHeight = 14.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
         // ✕: no me interesa este consejo (no vuelve a salir en un mes).
         onMute?.let { mute ->
             Text(
                 "✕",
                 color = Color.White.copy(alpha = 0.55f),
-                fontSize = 13.sp,
+                fontSize = 12.sp,
                 modifier = Modifier.clickable(onClick = mute).padding(start = 4.dp),
             )
         }

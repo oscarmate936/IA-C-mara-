@@ -138,6 +138,17 @@ class CompositionEngineTest {
         )
         assertTrue(g.message!!, g.message!!.contains("«Pila de troncos»"))
         assertTrue(g.message!!.contains("abajo"))
+        // Con poca seguridad no se pone nombre (un nombre equivocado, como «Piscina» en el cielo, es peor).
+        val unsure = CompositionEngine.evaluate(
+            input(
+                scene = SceneType.PAISAJE,
+                kind = null,
+                box = null,
+                saliency = SaliencyMap(w, h, values),
+                named = listOf(DetectedObject("Piscina", NRect(0.3f, 0.9f, 0.7f, 1f), 0.35f)),
+            ),
+        )
+        assertTrue(unsure.message!!, unsure.message!!.startsWith("Algo distrae"))
     }
 
     @Test

@@ -43,6 +43,11 @@ class AppPrefs(context: Context) {
         get() = sp.getBoolean(KEY_ENHANCE_GEOMETRY, true)
         set(value) = sp.edit().putBoolean(KEY_ENHANCE_GEOMETRY, value).apply()
 
+    /** Qué consejos se ven en el visor. */
+    var tips: TipsMode
+        get() = sp.getString(KEY_TIPS, null)?.let { n -> TipsMode.entries.firstOrNull { it.name == n } } ?: TipsMode.TODOS
+        set(value) = sp.edit().putString(KEY_TIPS, value.name).apply()
+
     /** Crítica del fotógrafo después de cada foto (nota por apartados y consejos). */
     var critique: Boolean
         get() = sp.getBoolean(KEY_CRITIQUE, true)
@@ -73,6 +78,7 @@ class AppPrefs(context: Context) {
         const val KEY_RAW = "raw"
         const val KEY_CRITIQUE = "critica"
         const val KEY_LEARNING = "aprender"
+        const val KEY_TIPS = "consejos"
     }
 }
 
@@ -81,4 +87,14 @@ enum class EnhanceMode(val label: String, val description: String) {
     AMBAS("Guardar las dos", "La foto original y una copia mejorada"),
     SOLO_MEJORADA("Solo la mejorada", "Se guarda la versión mejorada y se borra la original"),
     NO("Desactivada", "Solo la foto original, como sale de la cámara"),
+}
+
+/** Qué consejos se ven en el visor (para que no tapen la vista si no los quieres todos). */
+enum class TipsMode(val label: String, val description: String, private val minPriority: Float) {
+    TODOS("Todos", "Encuadre, luz, momento y ángulo", 0f),
+    IMPORTANTES("Solo los importantes", "Luz sobre la cara, algo que sale de la cabeza, ojos cerrados, móvil muy torcido…", 0.6f),
+    NINGUNO("Ninguno", "El visor limpio (la crítica después de la foto sigue)", Float.MAX_VALUE),
+    ;
+
+    fun shows(priority: Float): Boolean = priority >= minPriority
 }

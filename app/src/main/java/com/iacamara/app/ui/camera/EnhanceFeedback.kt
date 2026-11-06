@@ -43,40 +43,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * "¿Te gusta la mejora?" después de cada foto mejorada (Fase 7): 👍/👎 enseñan tu estilo a la app.
- * Si se guardaron las dos versiones, "Comparar" las enseña a pantalla completa.
+ * "¿Te gusta la mejora?" después de cada foto mejorada (Fase 7), en una sola línea: 👍/👎 enseñan tu
+ * estilo a la app; si se guardaron las dos versiones, "Comparar" las enseña a pantalla completa. Cuando
+ * hay crítica de la foto, esta línea va dentro de su tarjeta (para no apilar dos).
  */
 @Composable
-fun EnhanceCard(
-    shot: EnhancedShot,
-    onRate: (Boolean) -> Unit,
-    onCompare: () -> Unit,
-    onClose: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+fun EnhanceCard(actions: EnhanceActions, modifier: Modifier = Modifier) {
+    EnhanceRow(
+        actions,
         modifier = modifier
             .widthIn(max = 360.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.Black.copy(alpha = 0.72f))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-    ) {
-        Text("Mejora lista: ¿te gusta?", color = Color.White, fontSize = 12.sp, modifier = Modifier.weight(1f))
-        if (shot.bothKept) {
-            Text(
-                "Comparar",
-                color = Color(0xFFFFC94D),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.clickable(onClick = onCompare).padding(4.dp),
-            )
-        }
-        Text("👍", fontSize = 18.sp, modifier = Modifier.clickable { onRate(true) }.padding(4.dp))
-        Text("👎", fontSize = 18.sp, modifier = Modifier.clickable { onRate(false) }.padding(4.dp))
-        Text("✕", color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp, modifier = Modifier.clickable(onClick = onClose).padding(4.dp))
-    }
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.Black.copy(alpha = 0.6f))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    )
 }
 
 /**
