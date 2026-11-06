@@ -97,9 +97,26 @@ object AutoEnhance {
             // La fusión de noche/HDR ya ajustó el tono: solo color y acabado.
             recipe = recipe.copy(contrast = recipe.contrast * 0.4f, clarity = recipe.clarity * 0.5f, shadows = 0f, highlights = 0f)
         }
+        // De noche, los negros del sensor suelen venir con un tono rosa o verde: se neutralizan primero.
+        val source = if (context.scene == SceneType.NOCHE || context.alreadyProcessed) {
+            pixels.copyOf().also { ToneCurve.neutralizeBlacks(it) }
+        } else {
+            pixels
+        }
+        return enhanceNeutral(source, width, height, context, recipe, strength)
+    }
+
+    private fun enhanceNeutral(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        context: ShotContext,
+        recipe: Recipe,
+        strength: Float,
+    ): IntArray {
         val stats = Stats.of(pixels, width, height)
         val lut = toneLut(stats, recipe, strength)
-        val gains = whiteBalance(stats, recipe)
+        val gains = whiteBalance(stats, recipe, allowTint = context.scene == SceneType.NOCHE)
         val out = IntArray(pixels.size)
 
         // Capa de base (luminancia muy suavizada) a 1/4 de resolución: contraste local, sombras y luces.
@@ -256,12 +273,14 @@ object AutoEnhance {
      * azul–ámbar (luz de día, sombra, bombilla…); en el eje verde–magenta apenas, porque ahí el color
      * medio suele ser la propia escena (césped, hojas) y no la luz.
      */
-    internal fun whiteBalance(stats: Stats, recipe: Recipe): FloatArray {
+    internal fun whiteBalance(stats: Stats, recipe: Recipe, allowTint: Boolean = false): FloatArray {
         if (recipe.whiteBalance <= 0f) return floatArrayOf(1f, 1f, 1f)
         val amber = (stats.lnRG - stats.lnBG) / 2f // > 0: luz cálida
         val magenta = (stats.lnRG + stats.lnBG) / 2f // > 0: magenta, < 0: verde
+        // De noche un tono magenta o verde es un defecto del sensor, no la escena: se corrige más.
+        val tintLimit = if (allowTint) ln(1.12f) else ln(1.03f)
         val fixAmber = -amber.coerceIn(-ln(1.12f), ln(1.12f)) * recipe.whiteBalance
-        val fixMagenta = -magenta.coerceIn(-ln(1.03f), ln(1.03f)) * recipe.whiteBalance
+        val fixMagenta = -magenta.coerceIn(-tintLimit, tintLimit) * if (allowTint) 1f else recipe.whiteBalance
         var gr = kotlin.math.exp(fixAmber + fixMagenta)
         var gb = kotlin.math.exp(-fixAmber + fixMagenta)
         var gg = 1f

@@ -75,6 +75,34 @@ class BurstFeaturesTest {
     }
 
     @Test
+    fun elModoNocheNoSaleRosa() {
+        // Fotos de noche como las de la cámara: muy oscuras, con ruido y negros con exceso de rojo y azul.
+        val bg = background(13)
+        val r = Random(21)
+        val frames = (0 until 6).map { k ->
+            val moved = shifted(bg, k % 2, k % 3 - 1)
+            val px = IntArray(w * h) { i ->
+                val p = moved[i]
+                fun dark(v: Int, offset: Int) = (v * 0.12 + offset + r.nextGaussian() * 4).toInt()
+                argb(dark((p shr 16) and 0xFF, 9), dark((p shr 8) and 0xFF, 0), dark(p and 0xFF, 8))
+            }
+            ArrayFrameSource(w, h, px)
+        }
+        val night = BurstPipeline.night(frames)
+        var rg = 0.0
+        var bg2 = 0.0
+        var n = 0
+        for (p in night.pixels) {
+            if (LumaPlane.luma(p) < 60) {
+                rg += ((p shr 16) and 0xFF) - ((p shr 8) and 0xFF)
+                bg2 += (p and 0xFF) - ((p shr 8) and 0xFF)
+                n++
+            }
+        }
+        assertTrue("sombras R−G ${rg / n}, B−G ${bg2 / n}", abs(rg / n) < 6 && abs(bg2 / n) < 6)
+    }
+
+    @Test
     fun pegarUnaCaraAlineada() {
         val bg = background(11)
         // Base: "ojos cerrados" = mancha oscura en la cara. Donante: la cara buena, desplazada 6, 4 px.

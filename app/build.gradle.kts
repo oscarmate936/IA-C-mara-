@@ -74,8 +74,8 @@ android {
         jniLibs {
             // MediaPipe y ONNX Runtime podrían traer la misma librería de C++.
             pickFirsts += "**/libc++_shared.so"
-            // Librerías de Qualcomm para chips que no son los de tus móviles (DSP antiguo, HTP V68 y V81).
-            excludes += listOf("**/libQnnDsp*.so", "**/libQnnHtpV68*.so", "**/libQnnHtpV81*.so")
+            // Librerías de Qualcomm para chips que no son los de tus móviles (DSP antiguo y HTP V68).
+            excludes += listOf("**/libQnnDsp*.so", "**/libQnnHtpV68*.so")
             // El chip de IA (NPU) carga su parte del controlador desde archivos normales del móvil:
             // las librerías tienen que extraerse al instalar (además, así el APK ocupa menos).
             useLegacyPackaging = true

@@ -40,8 +40,12 @@ object BurstPipeline {
         val sigma = ImageStats.noiseSigma(lumas[reference]) * 2f
         val out = IntArray(ref.width * ref.height)
         Fusion.night(frames, flows, reference, sigma, out) { onProgress(0.3f + 0.65f * it) }
-        ToneCurve.autoBrighten(out)
-        ToneCurve.sharpen(out, ref.width, ref.height)
+        // Antes de aclarar: negros neutros (sin tono rosa) y sin manchas de color del ruido.
+        ToneCurve.neutralizeBlacks(out)
+        AutoEnhance.chromaDenoise(out, ref.width, ref.height, 3)
+        // Aclarado moderado: que siga pareciendo de noche y no se dispare el ruido.
+        ToneCurve.autoBrighten(out, targetMean = 0.24f, minGamma = 0.65f)
+        ToneCurve.sharpen(out, ref.width, ref.height, amount = 0.35f, threshold = 4)
         onProgress(1f)
         return Merged(out, ref.width, ref.height, reference, "Noche IA · ${frames.size} fotos")
     }
@@ -93,6 +97,7 @@ object BurstPipeline {
         Fusion.combine(frames, flows, reference, out, { onProgress(0.3f + 0.65f * it) }) { s, n ->
             if (lighten) Fusion.lightenSample(s, n) else Fusion.meanSample(s, n)
         }
+        if (lighten) ToneCurve.neutralizeBlacks(out)
         onProgress(1f)
         val kind = if (lighten) "estelas de luz" else "efecto seda"
         return Merged(out, ref.width, ref.height, reference, "Larga exposición ($kind) · ${frames.size} fotos")
@@ -112,6 +117,7 @@ object BurstPipeline {
         val sigma = ImageStats.noiseSigma(lumas) * 2f
         val out = IntArray(ref.width * ref.height)
         Fusion.night(frames, flows, reference, sigma, out) { onProgress(0.3f + 0.6f * it) }
+        ToneCurve.neutralizeBlacks(out)
         ToneCurve.sharpen(out, ref.width, ref.height, amount = 0.75f, threshold = 2)
         onProgress(1f)
         return Merged(out, ref.width, ref.height, reference, "Zoom con detalle · ${frames.size} fotos")

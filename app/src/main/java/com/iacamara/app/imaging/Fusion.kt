@@ -430,6 +430,55 @@ object ToneCurve {
     }
 
     /**
+     * Neutraliza el color de los negros. En la oscuridad el sensor deja los negros con un pequeño exceso
+     * de rojo y azul (o de verde); al aclarar la foto ese exceso se multiplica y la foto sale rosa.
+     * Se mide el color medio de las zonas oscuras y se resta su desviación respecto al gris, con toda
+     * su fuerza en los negros y desapareciendo hacia los tonos medios (las luces no se tocan).
+     *
+     * @return la corrección aplicada a (R, G, B) en los negros, para pruebas y diagnóstico.
+     */
+    fun neutralizeBlacks(pixels: IntArray, maxOffset: Int = 30): IntArray {
+        var sr = 0L
+        var sg = 0L
+        var sb = 0L
+        var n = 0
+        for (i in pixels.indices step 3) {
+            val p = pixels[i]
+            val l = LumaPlane.luma(p)
+            if (l in 2..45) {
+                sr += (p shr 16) and 0xFF
+                sg += (p shr 8) and 0xFF
+                sb += p and 0xFF
+                n++
+            }
+        }
+        // Con muy pocas zonas oscuras no hay nada fiable que medir.
+        if (n < pixels.size / 3 / 50) return intArrayOf(0, 0, 0)
+        val mr = sr / n.toFloat()
+        val mg = sg / n.toFloat()
+        val mb = sb / n.toFloat()
+        val gray = minOf(mr, mg, mb)
+        val off = intArrayOf(
+            (mr - gray).toInt().coerceIn(0, maxOffset),
+            (mg - gray).toInt().coerceIn(0, maxOffset),
+            (mb - gray).toInt().coerceIn(0, maxOffset),
+        )
+        if (off.all { it <= 1 }) return intArrayOf(0, 0, 0)
+        val fade = FloatArray(256) { l -> (1f - l / 140f).coerceIn(0f, 1f) }
+        for (i in pixels.indices) {
+            val p = pixels[i]
+            val f = fade[LumaPlane.luma(p)]
+            if (f <= 0f) continue
+            pixels[i] = argb(
+                (((p shr 16) and 0xFF) - off[0] * f + 0.5f).toInt(),
+                (((p shr 8) and 0xFF) - off[1] * f + 0.5f).toInt(),
+                ((p and 0xFF) - off[2] * f + 0.5f).toInt(),
+            )
+        }
+        return off
+    }
+
+    /**
      * Aclara una foto oscura (modo noche) con una curva gamma calculada para llevar el brillo medio a
      * `targetMean`, sin quemar las luces (la curva deja el blanco en blanco). Respeta el color: escala los
      * tres canales por igual.

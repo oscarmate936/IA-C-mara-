@@ -83,7 +83,7 @@ class AcceleratorStore private constructor(context: Context) {
     fun markBroken(model: String, backend: Backend, reason: String) {
         sp.edit()
             .putBoolean("roto:$model:${backend.name}", true)
-            .putString("error:$model:${backend.name}", reason.take(160))
+            .putString("error:$model:${backend.name}", reason.take(500))
             .apply()
     }
 
@@ -275,16 +275,25 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
             finish(Backend.CPU, 0f)
             return
         }
+        submit(job, finish, attempt = 0)
+    }
+
+    /**
+     * Pone el trabajo en la cola. Si todavía no hay una imagen útil para compararlo (p. ej. un detector
+     * a oscuras, sin nada que detectar), vuelve al final de la cola para no bloquear a los demás modelos.
+     */
+    private fun submit(job: Job, finish: (Backend, Float) -> Unit, attempt: Int) {
         try {
             executor.execute {
+                var retry = false
                 try {
-                    process(job, finish)
+                    retry = process(job, finish) && attempt < MAX_ATTEMPTS && !closed
                 } catch (e: Throwable) {
                     Log.w(TAG, "No se pudo acelerar ${job.model.key}", e)
                 } finally {
                     probingNow = null
                     measuringFlag = false
-                    finish(Backend.CPU, 0f)
+                    if (retry) submit(job, finish, attempt + 1) else finish(Backend.CPU, 0f)
                 }
             }
         } catch (e: RejectedExecutionException) {
@@ -292,12 +301,13 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
         }
     }
 
-    private fun process(job: Job, finish: (Backend, Float) -> Unit) {
+    /** @return true si hay que volver a intentarlo más tarde (aún no había una imagen útil). */
+    private fun process(job: Job, finish: (Backend, Float) -> Unit): Boolean {
         val m = job.model
         val remembered = store.chosen(m.key)
-        if (remembered == Backend.CPU || closed) return
+        if (remembered == Backend.CPU || closed) return false
         if (remembered != null && !store.isBroken(m.key, remembered)) {
-            val sample = waitSample(job.sampleFrom) ?: return
+            val sample = waitSample(job.sampleFrom) ?: return true
             // Ya se probó en este móvil: se activa directamente (con la marca puesta por si acaso).
             probingNow = "${m.key} ${remembered.label}"
             val session = runCatching {
@@ -314,19 +324,18 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
             }
             if (closed) {
                 session.getOrNull()?.close()
-                return
+                return false
             }
             session.getOrNull()?.let {
                 m.swap(it, remembered)
                 finish(remembered, store.measuredMs(m.key, remembered))
-                return
+                return false
             }
             store.markBroken(m.key, remembered, describe(session.exceptionOrNull()))
         }
 
         // Primera vez: una imagen real con la que se pueda comparar, y su referencia en el procesador.
-        // Sin imagen útil en 2 minutos no se decide nada: se volverá a probar en el próximo arranque.
-        val (sample, reference) = informativeSample(job) ?: return
+        val (sample, reference) = informativeSample(job) ?: return true
         val cpuMs = measure { m.runSample(null, sample) }
         store.recordMs(m.key, Backend.CPU, cpuMs)
 
@@ -374,11 +383,12 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
             if (!closed) store.choose(m.key, Backend.CPU)
             finish(Backend.CPU, cpuMs)
         }
+        return false
     }
 
     /** Una imagen real cuya salida en el procesador sirve para comparar, con esa salida. */
     private fun informativeSample(job: Job): Pair<OnnxModel.Sample, Any>? {
-        val deadline = SystemClock.elapsedRealtime() + SAMPLE_TIMEOUT_MS
+        val deadline = SystemClock.elapsedRealtime() + INFORMATIVE_TIMEOUT_MS
         while (!closed && SystemClock.elapsedRealtime() < deadline) {
             val candidate = waitSample(job.sampleFrom) ?: return null
             val out = job.model.runSample(null, candidate)
@@ -437,6 +447,12 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
     private companion object {
         const val TAG = "Aceleracion"
         const val SAMPLE_TIMEOUT_MS = 120_000L
+
+        /** Tiempo que se espera una imagen útil antes de pasar al siguiente modelo y volver luego. */
+        const val INFORMATIVE_TIMEOUT_MS = 25_000L
+
+        /** Veces que un modelo vuelve a la cola esperando una imagen útil (en total ~2,5 min). */
+        const val MAX_ATTEMPTS = 6
 
         /** Un solo hilo de pruebas para toda la app. */
         val executor: ExecutorService = Executors.newSingleThreadExecutor { r ->
