@@ -19,6 +19,7 @@ saliencia, misma nota de estética) con los mismos criterios que la app (OutputC
 sin versión INT8: es ligera y en el procesador va bien.
 
 Uso: python cuantizar_npu.py [--solo=u2netp,yolo11n] <carpeta_assets_models> <carpeta_salida> <carpeta_imágenes>...
+     python cuantizar_npu.py --ajustar <modelo_int8.onnx>...   (solo los ajustes para el NPU)
 Los *_int8.onnx de la carpeta de salida se copian a app/src/main/assets/models/.
 """
 
@@ -266,6 +267,74 @@ def float_tail(model):
     return sorted(tail)
 
 
+# Operaciones que dependen de la disposición de los datos (NCHW/NHWC). ONNX Runtime deja que el NPU las acepte
+# provisionalmente en una primera pasada y solo las valida de verdad tras pasarlas a NHWC: si entonces el chip
+# las rechaza, la sesión entera queda inválida ("... was inserted using the NHWC format ... but was not
+# selected by that EP"). Por eso en el modelo de 8 bits no puede quedar ninguna en coma flotante.
+LAYOUT_SENSITIVE = {"Conv", "ConvTranspose", "MaxPool", "AveragePool", "GlobalAveragePool", "GlobalMaxPool",
+                    "Resize", "BatchNormalization", "InstanceNormalization", "DepthToSpace", "SpaceToDepth",
+                    "GridSample", "LRN"}
+
+
+def npu_friendly(model):
+    """Ajustes para que el NPU acepte el modelo de 8 bits sin cambiar el resultado.
+
+    - Resize lineal con 'pytorch_half_pixel' → 'half_pixel' (idénticos si la salida mide más de 1 píxel):
+      en el NPU el primero usa la operación Resize genérica y el segundo ResizeBilinear, que admiten más chips.
+    - Conv 1×1 en coma flotante con una sola salida (la "DFL" de YOLO) → Mul + ReduceSum, que el NPU
+      rechaza limpiamente (y van al procesador) en vez de aceptarla y fallar después.
+    @return el modelo y la lista de operaciones sensibles a la disposición que siguen en coma flotante.
+    """
+    from onnx import helper, numpy_helper, shape_inference
+
+    g = model.graph
+    shapes = {v.name: [d.dim_value for d in v.type.tensor_type.shape.dim]
+              for v in list(shape_inference.infer_shapes(model).graph.value_info) + list(g.output)}
+    prod = {o: n for n in g.node for o in n.output}
+    inits = {i.name: i for i in g.initializer}
+
+    def quantized_input(n):
+        p = prod.get(n.input[0])
+        return p is not None and p.op_type == "DequantizeLinear"
+
+    new_nodes = []
+    for n in g.node:
+        if n.op_type == "Resize":
+            attrs = {a.name: a for a in n.attribute}
+            mode = attrs["mode"].s.decode() if "mode" in attrs else "nearest"
+            ctm = attrs.get("coordinate_transformation_mode")
+            out = shapes.get(n.output[0], [])
+            if mode == "linear" and ctm is not None and ctm.s == b"pytorch_half_pixel" and len(out) == 4 and min(out[2:]) > 1:
+                ctm.s = b"half_pixel"
+        if n.op_type == "Conv" and not quantized_input(n) and len(n.input) == 2 and n.input[1] in inits:
+            w = numpy_helper.to_array(inits[n.input[1]])
+            attrs = {a.name: helper.get_attribute_value(a) for a in n.attribute}
+            simple = (w.shape[0] == 1 and w.shape[2:] == (1, 1) and attrs.get("group", 1) == 1
+                      and all(v == 1 for v in attrs.get("strides", [1, 1]))
+                      and not any(attrs.get("pads", [0, 0, 0, 0])))
+            if simple:
+                wname = n.name + "_peso"
+                aname = n.name + "_eje"
+                g.initializer.append(numpy_helper.from_array(w.reshape(1, w.shape[1], 1, 1), wname))
+                g.initializer.append(numpy_helper.from_array(np.array([1], dtype=np.int64), aname))
+                mul = helper.make_node("Mul", [n.input[0], wname], [n.output[0] + "_mul"], name=n.name + "_mul")
+                red = helper.make_node("ReduceSum", [n.output[0] + "_mul", aname], [n.output[0]], keepdims=1,
+                                       name=n.name + "_suma")
+                new_nodes += [mul, red]
+                continue
+        new_nodes.append(n)
+    del g.node[:]
+    g.node.extend(new_nodes)
+    used = {i for n in g.node for i in n.input}
+    unused = [i for i in g.initializer if i.name not in used]
+    for i in unused:
+        g.initializer.remove(i)
+    prod = {o: n for n in g.node for o in n.output}
+    left = [n.name for n in g.node if n.op_type in LAYOUT_SENSITIVE
+            and not (prod.get(n.input[0]) is not None and prod[n.input[0]].op_type == "DequantizeLinear")]
+    return model, left
+
+
 def fold_shapes(src, dst):
     """Calcula de antemano las operaciones de forma (Shape, Gather…): la entrada tiene tamaño fijo."""
     so = ort.SessionOptions()
@@ -342,6 +411,13 @@ def check(key, ref_sess, q_sess, inputs):
 
 
 def main():
+    if len(sys.argv) > 2 and sys.argv[1] == "--ajustar":
+        # Ajusta para el NPU modelos de 8 bits ya generados (sin volver a cuantizar).
+        for f in sys.argv[2:]:
+            model, left = npu_friendly(onnx.load(f))
+            onnx.save(model, f)
+            print(f"{Path(f).name}: ajustado" + (f"; siguen en coma flotante: {left}" if left else ""))
+        return
     only = [a[7:] for a in sys.argv if a.startswith("--solo=")]
     sys.argv = [a for a in sys.argv if not a.startswith("--solo=")]
     assets = Path(sys.argv[1])
@@ -383,6 +459,10 @@ def main():
         )
         dst = out / f"{Path(file).stem}_int8.onnx"
         quantize(str(pre), str(dst), cfg)
+        model, left = npu_friendly(onnx.load(str(dst)))
+        onnx.save(model, str(dst))
+        if left:
+            print(f"{key}: AVISO, quedan en coma flotante operaciones que el NPU podría rechazar: {left}", flush=True)
         q = ort.InferenceSession(str(dst), providers=["CPUExecutionProvider"])
         oks, total, detail = check(key, ref, q, [prep(im) for im in test_imgs])
         extra = f" (mín {min(detail):.3f}, máx {max(detail):.3f})" if detail else ""

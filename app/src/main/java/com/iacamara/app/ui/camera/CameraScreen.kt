@@ -289,7 +289,7 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
                     mode = currentState.mode,
                     perception = perception,
                     iaEnabled = iaEnabled,
-                    flashOn = currentState.flash == FlashSetting.ON,
+                    flashOn = currentState.flash != FlashSetting.OFF,
                     zoomRatio = currentState.zoomRatio,
                     hasOpticalTele = currentState.hasOpticalTele,
                 ),
@@ -589,10 +589,17 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
                         if (state.mode != PhotoMode.FOTO) InfoChip(state.mode.label)
                         if (smartShutter && iaEnabled) InfoChip("AUTO-DISPARO")
                         val plan = CaptureDirector.plan(
-                            state.mode, perception, iaEnabled, state.flash == FlashSetting.ON,
+                            state.mode, perception, iaEnabled, state.flash != FlashSetting.OFF,
                             state.zoomRatio, state.hasOpticalTele,
                         )
                         if (plan.strategy != CaptureStrategy.SINGLE && state.processing == null) InfoChip(plan.description)
+                        if (state.flash != FlashSetting.OFF && state.hasFlash) {
+                            when {
+                                CaptureDirector.ignoresFlash(state.mode) -> InfoChip("Este modo no usa flash")
+                                plan.strategy == CaptureStrategy.SINGLE &&
+                                    (state.mode == PhotoMode.NOCHE_IA || state.mode == PhotoMode.HDR_IA) -> InfoChip("Con flash: 1 foto")
+                            }
+                        }
                         if (state.enhancing > 0) InfoChip("✨ Mejorando…")
                         if (state.rawActive) InfoChip("RAW + JPEG")
                     }

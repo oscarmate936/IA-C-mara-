@@ -70,7 +70,7 @@ Cada caso tiene su prueba automática (`ColorFidelityTest`, `BurstFeaturesTest`)
 | Mejora automática a la hora dorada | Enfriaba la luz cálida de verdad (playa, arena al sol) | El color de la luz se mide solo en superficies casi neutras, con corrección más prudente |
 | Zoom con detalle de día | Quitaba el verde a las hojas en sombra | Sin corrección de negros en fotos de día |
 | Todos con los ojos abiertos | Si la otra foto de la ráfaga salía más clara, la cara pegada se notaba | Se igualan la luz y el color de la cara con los de la foto |
-| Ráfagas con flash AUTO | Unas fotos con flash y otras sin él, y un preflash por foto | Durante la ráfaga no hay flash (el modo noche lo sustituye) |
+| Flash en NOCHE y HDR | El flash se veía activado pero no se encendía (las ráfagas van sin flash para que no salgan unas fotos con flash y otras sin él) | Con el flash activado (encendido o automático) manda el flash: una foto con flash, y la etiqueta junto al botón lo dice («Con flash: 1 foto»). SIN GENTE y LARGA EXP. avisan «Este modo no usa flash» |
 | Girar el móvil durante una ráfaga | Fotos con distinta orientación que no encajaban | La orientación se fija hasta que termina la ráfaga |
 | Falta de memoria (sensores de muchos MP) | Si la fusión fallaba se perdía la foto; la mejora y la fusión podían ir a la vez | Se guarda la foto normal y se avisa; un solo trabajo pesado a la vez y el ruido de color usa 5 veces menos memoria |
 | Móviles que guardan en Display P3 | Las copias procesadas saldrían apagadas | Todo se decodifica en sRGB |

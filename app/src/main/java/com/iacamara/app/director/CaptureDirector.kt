@@ -43,10 +43,15 @@ data class CapturePlan(
  * - Zoom digital → varias fotos juntas (menos ruido y bordes más limpios).
  * - Personas o movimiento → ráfaga y quedarse con la más nítida y con los ojos abiertos.
  * - Si no, una foto normal (la más rápida).
+ *
+ * Con el flash activado (encendido o automático) manda el flash: una sola foto con flash, también en
+ * los modos NOCHE y HDR (en una ráfaga unas fotos saldrían con flash y otras sin él). SIN GENTE y
+ * LARGA EXP. no tienen sentido con flash: siguen siendo ráfagas, sin flash.
  */
 object CaptureDirector {
 
     /**
+     * @param flashOn flash encendido o automático.
      * @param zoomRatio zoom actual; con zoom digital se juntan varias fotos para sacar más detalle.
      * @param hasOpticalTele el móvil tiene teleobjetivo de 3x (entre 3x y 3,5x el zoom es óptico).
      */
@@ -60,7 +65,7 @@ object CaptureDirector {
     ): CapturePlan {
         val single = CapturePlan(CaptureStrategy.SINGLE, 1)
         return when (mode) {
-            PhotoMode.NOCHE_IA -> CapturePlan(CaptureStrategy.NIGHT, nightFrames(perception))
+            PhotoMode.NOCHE_IA -> if (flashOn) single else CapturePlan(CaptureStrategy.NIGHT, nightFrames(perception))
             // Unas 10 fotos en ~5 s: la gente que pasa cambia de sitio y la mediana la borra.
             PhotoMode.SIN_GENTE -> CapturePlan(CaptureStrategy.REMOVE_MOVING, 10, intervalMs = 450L)
             // De noche, estelas de las luces; de día, agua y nubes sedosas.
@@ -69,7 +74,7 @@ object CaptureDirector {
                     (perception?.meta?.ev100 ?: 10f) < 5f
                 CapturePlan(CaptureStrategy.LONG_EXPOSURE, 16, lighten = dark)
             }
-            PhotoMode.HDR_IA -> CapturePlan(CaptureStrategy.HDR, 3)
+            PhotoMode.HDR_IA -> if (flashOn) single else CapturePlan(CaptureStrategy.HDR, 3)
             PhotoMode.FOTO -> {
                 if (!iaEnabled || flashOn || perception == null) return single
                 val light = perception.light
@@ -89,6 +94,9 @@ object CaptureDirector {
             else -> single
         }
     }
+
+    /** Modos que siempre son ráfaga y no usan flash. */
+    fun ignoresFlash(mode: PhotoMode): Boolean = mode == PhotoMode.SIN_GENTE || mode == PhotoMode.LARGA_EXP
 
     /** Zoom que se consigue recortando y ampliando (no con un objetivo): ahí ayudan varias fotos. */
     fun isDigitalZoom(zoomRatio: Float, hasOpticalTele: Boolean): Boolean = when {

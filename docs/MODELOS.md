@@ -38,7 +38,12 @@ Notas:
   procesador con una imagen real; la saliencia, solo con imágenes en las que algo destaca). En el diagnóstico salen
   como «NPU 8 bits». Para que U²-Net funcione en 8 bits, `cuantizar_npu.py` pasa al sesgo dos canales que valen ~226
   en toda la imagen (con una corrección exacta en el borde) y deja en coma flotante la decodificación de cajas y el NMS
-  de YOLO. Comprobación con imágenes que no se usaron para calibrar: U²-Net coincide en 38/38 (coseno ≥ 0,979),
+  de YOLO. Además, en esos modelos no puede quedar en coma flotante ninguna operación "sensible a la disposición"
+  (Conv, Resize, Pool…): ONNX Runtime deja que el NPU las acepte en una primera pasada y solo las valida de verdad
+  después; si el chip las rechaza entonces, la sesión entera falla (el error «… inserted using the NHWC format … but
+  was not selected by that EP» del Honor). Por eso la convolución final de YOLO (DFL) se convierte en Mul + ReduceSum
+  y los Resize de U²-Net usan `half_pixel` (en el NPU, ResizeBilinear) en vez de `pytorch_half_pixel` (Resize
+  genérico): mismo resultado. Comprobación con imágenes que no se usaron para calibrar: U²-Net coincide en 38/38 (coseno ≥ 0,979),
   YOLO11n en 20/20 y YOLO11s en 21/21. NIMA y YOLOE no pasan (el error se acumula capa a capa) y se quedan en el
   procesador; CLIP tampoco tiene versión de 8 bits para el NPU.
 - Las librerías de Qualcomm (`com.qualcomm.qti:qnn-runtime`) solo incluyen las de los chips Hexagon V69 (Snapdragon

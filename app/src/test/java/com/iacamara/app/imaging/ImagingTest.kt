@@ -174,6 +174,10 @@ class ImagingTest {
         assertEquals(CaptureStrategy.SINGLE, CaptureDirector.plan(PhotoMode.FOTO, perception(setOf(Condition.POCA_LUZ)), false, false).strategy)
         // Modos forzados.
         assertEquals(CaptureStrategy.NIGHT, CaptureDirector.plan(PhotoMode.NOCHE_IA, null, true, false).strategy)
+        // Con el flash activado manda el flash (una foto); SIN GENTE sigue siendo ráfaga, sin flash.
+        assertEquals(CaptureStrategy.SINGLE, CaptureDirector.plan(PhotoMode.NOCHE_IA, null, true, true).strategy)
+        assertEquals(CaptureStrategy.SINGLE, CaptureDirector.plan(PhotoMode.HDR_IA, null, true, true).strategy)
+        assertEquals(CaptureStrategy.REMOVE_MOVING, CaptureDirector.plan(PhotoMode.SIN_GENTE, null, true, true).strategy)
         assertEquals(CaptureStrategy.HDR, CaptureDirector.plan(PhotoMode.HDR_IA, null, false, false).strategy)
         assertEquals(CaptureStrategy.SINGLE, CaptureDirector.plan(PhotoMode.PRO, null, true, false).strategy)
     }
