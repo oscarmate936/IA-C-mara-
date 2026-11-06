@@ -643,6 +643,41 @@ Cada fase termina con un **APK instalable** para probar en tus dos móviles.
 | **7 — Aprendizaje** | Registro de eventos, "Tu estilo", bandido contextual, 👍/👎, conservación de lo aprendido entre versiones. Hecho así: tu estilo por grupo de escenas (calidez, color, contraste, luz) aplicado a la mejora automática; «Afinar mi estilo» (elegir entre tres versiones de la misma foto, como en el óptico: la simulación mostró que con 👍/👎 sueltos hacen falta muchas decenas de valoraciones por ajuste, y comparando, unas 20 elecciones en total); 👍/👎 con versiones elegidas por muestreo de Thompson; lo que borras; consejos silenciados, frase que te funciona y lo que ya dominas; firma fija para conservarlo | **APK v0.7** | La mejora automática se adapta a tus gustos tras ~50 fotos (o tras una prueba de gusto). |
 | **8 — Pulido** | Optimización de velocidad, temperatura y batería en el S22+ y el Honor; estabilidad; ajuste fino de cada modelo. **Modelos pendientes** (necesitan un permiso que se da desde el ordenador): **MobileCLIP2-S0** en lugar de TinyCLIP (sus pesos solo están en Hugging Face y en el servidor de Apple, que la red del entorno de compilación no alcanza) y **YOLO26s** en lugar de YOLO11s (exportarlo exige abrir el archivo de pesos de PyTorch descargado, que el entorno bloquea por seguridad) | **APK v1.0** | Fluida, estable y sin calentamiento excesivo. |
 
+### Fase 8 — Pulido: lo que falta
+
+Hecho hasta ahora (v0.4.32–0.4.38): todo acelerado en el S22+ (YOLO11s 15 ms, YOLOE 15, caras 9, saliencia 40,
+estética 2 en el NPU; cuerpo en la GPU) y lo validado se conserva al actualizar; protección contra el calor; visor
+despejado; autodiagnóstico con sus arreglos; líneas guía sin puntos de fuga falsos.
+
+1. **Honor Magic 8 Lite** (su NPU solo admite 8 bits)
+   - [ ] Diagnóstico con la última versión: qué va en el NPU de 8 bits (saliencia, YOLO26n, YOLO11s, caras) y qué no.
+   - [ ] Arreglar lo que falle, como se hizo en el S22+.
+   - [ ] Fluidez y calor en un móvil de gama media.
+2. **Funciones sin probar en los móviles**
+   - [ ] Ráfagas: Noche IA, HDR, Mejor de 4 y ojos abiertos en grupo.
+   - [ ] Modos: SIN GENTE, LARGA EXP., zoom con detalle, PRO y RAW (DNG), flash en NOCHE/HDR.
+   - [ ] Mejora automática: enderezado, perspectiva y recorte según la guía.
+   - [ ] Cámara frontal (selfies) y fotos de grupo con caras pequeñas (YuNet).
+   - [ ] Disparo inteligente.
+   - [ ] Fase 7: Comparar, «Afinar mi estilo», 👍/👎; aprender de lo que borras (solo con «Guardar las dos»).
+   - [ ] Consejos: silenciar (✕), «solo los importantes», «ya dominas».
+3. **Ajuste fino con fotos reales**
+   - [ ] Escenas: que acierte el tipo (p. ej. una calle con casas y árboles sale «Arquitectura»).
+   - [ ] Guía elegida y nota del encuadre; consejos que se repiten («el cielo es bonito…»).
+   - [ ] Exposición automática y luces protegidas.
+   - [ ] Crítica después de la foto: que sus consejos sean útiles.
+   - [ ] Umbrales de caras y personas en uso real (día y noche).
+4. **Rendimiento, batería y estabilidad**
+   - [ ] Medir batería y temperatura en una sesión de unos minutos (a la sombra, para separar el calor del ambiente).
+   - [ ] Tiempo de arranque de la IA.
+   - [ ] Sesiones largas, cambiar de modo, de cámara y de app, poco espacio libre.
+   - [ ] Tamaño del APK (~256 MB): ver si algún modelo sobra.
+5. **Modelos pendientes** (necesitan permiso de red desde el ordenador)
+   - [ ] MobileCLIP2-S0 en lugar de TinyCLIP.
+   - [ ] YOLO26s en lugar de YOLO11s.
+6. **Cierre (APK v1.0)**
+   - [ ] Revisión final de la documentación y versión 1.0.
+
 **Pruebas en todas las fases:** tests unitarios del motor de composición y del Director IA, benchmarks de
 rendimiento en tus dos móviles y un conjunto de fotos de referencia para comprobar que las mejoras de imagen no
 empeoran entre versiones.
