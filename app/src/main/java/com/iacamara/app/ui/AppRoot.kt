@@ -18,6 +18,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.iacamara.app.ui.camera.CameraScreen
+import com.iacamara.app.ui.camera.CameraSession
 import com.iacamara.app.ui.diagnostics.DiagnosticsScreen
 import com.iacamara.app.ui.settings.SettingsScreen
 
@@ -50,6 +52,9 @@ fun AppRoot() {
         askedOnce = true
     }
     var screen by rememberSaveable { mutableStateOf(Screen.CAMERA) }
+    // La cámara y la IA viven mientras la app está abierta (al ir a Ajustes no se recargan los modelos).
+    val session = remember { CameraSession(context.applicationContext) }
+    DisposableEffect(Unit) { onDispose { session.release() } }
 
     when {
         !hasCameraPermission -> PermissionScreen(
@@ -67,7 +72,7 @@ fun AppRoot() {
             onBack = { screen = Screen.CAMERA },
             onOpenDiagnostics = { screen = Screen.DIAGNOSTICS },
         )
-        else -> CameraScreen(onOpenSettings = { screen = Screen.SETTINGS })
+        else -> CameraScreen(session, onOpenSettings = { screen = Screen.SETTINGS })
     }
 }
 

@@ -86,8 +86,15 @@ fun EnhanceCard(
 @Composable
 fun CompareDialog(shot: EnhancedShot, onRate: (Boolean) -> Unit, onTaste: () -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val after by produceState<ImageBitmap?>(null, shot.enhanced) { value = load(context, shot.enhanced) }
-    val before by produceState<ImageBitmap?>(null, shot.original) { value = load(context, shot.original) }
+    var missing by remember { mutableStateOf(false) }
+    val after by produceState<ImageBitmap?>(null, shot.enhanced) {
+        value = load(context, shot.enhanced)
+        if (value == null) missing = true
+    }
+    val before by produceState<ImageBitmap?>(null, shot.original) {
+        value = load(context, shot.original)
+        if (value == null) missing = true
+    }
     var showOriginal by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -113,10 +120,11 @@ fun CompareDialog(shot: EnhancedShot, onRate: (Boolean) -> Unit, onTaste: () -> 
                     },
             ) {
                 val image = if (showOriginal) before else after
-                if (image != null) {
-                    Image(bitmap = image, contentDescription = if (showOriginal) "Original" else "Mejorada", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
-                } else {
-                    CircularProgressIndicator(color = Color.White)
+                when {
+                    image != null ->
+                        Image(bitmap = image, contentDescription = if (showOriginal) "Original" else "Mejorada", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                    missing -> Text("No se pudo abrir la foto (¿la has borrado?)", color = Color.White, fontSize = 14.sp)
+                    else -> CircularProgressIndicator(color = Color.White)
                 }
                 Text(
                     if (showOriginal) "Original" else "Mejorada",

@@ -17,6 +17,21 @@ data class SceneInputs(
  */
 object SceneRules {
 
+    /**
+     * Las caras que forman parte de la foto: las de tamaño parecido a la mayor (al menos [MAIN_FACE_SHARE]
+     * de su área). El detector de caras ve también caras pequeñas al fondo (gente que pasa lejos): en un
+     * retrato no cuentan para decidir que es un grupo. Un grupo lejano (todas pequeñas y parecidas) sí.
+     */
+    fun mainFaces(faces: List<NRect>): List<NRect> {
+        val biggest = faces.maxOfOrNull { it.area } ?: return emptyList()
+        return faces.filter { it.area >= biggest * MAIN_FACE_SHARE }
+    }
+
+    const val MAIN_FACE_SHARE = 0.25f
+
+    /** Ancho mínimo (parte del encuadre) de una cara para que el modelo de 478 puntos le vea los ojos. */
+    const val EYES_MIN_FACE = 0.1f
+
     val ANIMALS = setOf("bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe")
     val FOOD_OBJECTS = setOf(
         "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake",
@@ -35,7 +50,7 @@ object SceneRules {
 
         // Personas primero: son lo más importante de una foto.
         if (i.front && i.faces.isNotEmpty()) return SceneType.SELFIE
-        if (i.faces.size >= 3 || persons.count { it.box.area > 0.02f } >= 3) return SceneType.GRUPO
+        if (mainFaces(i.faces).size >= 3 || persons.count { it.box.area > 0.02f } >= 3) return SceneType.GRUPO
         if (persons.size >= 2 && clip(SceneType.GRUPO) >= 0.6f) return SceneType.GRUPO
         if (i.faces.isNotEmpty() && biggestFace >= 0.012f) return SceneType.RETRATO
         if (biggestPerson >= 0.12f) return SceneType.RETRATO

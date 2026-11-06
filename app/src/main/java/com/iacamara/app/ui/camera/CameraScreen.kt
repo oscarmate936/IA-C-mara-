@@ -1,5 +1,6 @@
 package com.iacamara.app.ui.camera
 
+import androidx.activity.compose.BackHandler
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -76,7 +77,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.iacamara.app.ShutterKeys
-import com.iacamara.app.camera.CameraEngine
 import com.iacamara.app.camera.EnhancedShot
 import com.iacamara.app.camera.FlashSetting
 import com.iacamara.app.camera.Lens
@@ -113,12 +113,11 @@ import com.iacamara.app.director.Direction
 import com.iacamara.app.director.DirectorCaps
 import com.iacamara.app.director.DirectorSession
 import com.iacamara.app.director.TipAction
-import com.iacamara.app.perception.MotionSensor
 import com.iacamara.app.perception.NRect
-import com.iacamara.app.perception.PerceptionAnalyzer
 import com.iacamara.app.capture.ShotInfo
 import com.iacamara.app.imaging.CropHint
 import com.iacamara.app.perception.FrameMath
+import com.iacamara.app.perception.SceneRules
 import com.iacamara.app.perception.SceneType
 import com.iacamara.app.coach.Advice
 import com.iacamara.app.coach.CoachSession
@@ -136,14 +135,14 @@ import kotlin.math.sqrt
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun CameraScreen(onOpenSettings: () -> Unit) {
+fun CameraScreen(session: CameraSession, onOpenSettings: () -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
 
     val prefs = remember { AppPrefs(context.applicationContext) }
-    val engine = remember { CameraEngine(context.applicationContext) }
+    val engine = session.engine
     val state by engine.state.collectAsStateWithLifecycle()
 
     var showGrid by remember { mutableStateOf(prefs.grid) }
@@ -152,8 +151,8 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
     var showHistogram by remember { mutableStateOf(prefs.histogram) }
 
     // IA: percepción en vivo (Capa 1) + Director (Capa 2).
-    val motionSensor = remember { MotionSensor(context.applicationContext) }
-    val analyzer = remember { PerceptionAnalyzer(context.applicationContext, engine.captureMetadata, motionSensor) }
+    val motionSensor = session.motionSensor
+    val analyzer = session.analyzer
     val perception by analyzer.perception.collectAsStateWithLifecycle()
     val iaError by analyzer.error.collectAsStateWithLifecycle()
     val director = remember { DirectorSession() }
@@ -196,9 +195,10 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
     DisposableEffect(Unit) {
         ShutterKeys.enabled = true
         onDispose {
+            // Al ir a Ajustes solo se apaga la cámara: los modelos y el trabajo pendiente siguen (CameraSession).
             ShutterKeys.enabled = false
-            engine.release()
-            analyzer.close()
+            engine.stop()
+            analyzer.setForeground(false)
         }
     }
     // Protección de la aceleración: se sabe si la app se cerró de golpe con la cámara a la vista.
@@ -445,8 +445,10 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
 
             // Disparo inteligente: encuadre bueno, móvil quieto y todos con los ojos abiertos.
             if (smartShutter && !s.capturing) {
-                val eyesOk = p.faces.isEmpty() ||
-                    (p.faceDetails.size >= p.faces.size && p.faceDetails.all { it.eyesOpen })
+                // Ojos abiertos en todas las caras que el modelo de ojos puede medir (las 5 mayores y no
+                // diminutas); si hay caras grandes, al menos una medida.
+                val checkable = SceneRules.mainFaces(p.faces).count { it.width >= SceneRules.EYES_MIN_FACE }
+                val eyesOk = p.faceDetails.all { it.eyesOpen } && (checkable == 0 || p.faceDetails.isNotEmpty())
                 val ready = g.isGood && eyesOk &&
                     Condition.TEMBLOR !in p.conditions && Condition.MOVIMIENTO !in p.conditions
                 autoProgress = smart.update(ready, now)
@@ -511,6 +513,12 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
             engine.clearCritique()
         }
     }
+
+    // Mientras se hace una foto (ráfaga, noche, HDR), Atrás no cierra la app: se perdería la foto.
+    BackHandler(enabled = state.capturing) { engine.showInfo(WAIT_TEXT) }
+
+    // Al volver de Ajustes: los hábitos pueden haberse olvidado allí.
+    LaunchedEffect(Unit) { engine.refreshHabits() }
 
     // Mensajes temporales.
     LaunchedEffect(state.message) {
@@ -602,7 +610,7 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
                 icon = Icons.Filled.Settings,
                 description = "Ajustes",
                 rotation = iconRotation,
-                onClick = onOpenSettings,
+                onClick = { if (state.capturing) engine.showInfo(WAIT_TEXT) else onOpenSettings() },
             )
         }
 
@@ -676,9 +684,10 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
                         state.captureMegapixels?.let { mp -> InfoChip(String.format(Locale.US, "%.0f MP", mp)) }
                         if (state.mode != PhotoMode.FOTO) InfoChip(state.mode.label)
                         if (smartShutter && iaEnabled) InfoChip("AUTO-DISPARO")
+                        val habits by engine.habits.collectAsStateWithLifecycle()
                         val plan = CaptureDirector.plan(
                             state.mode, perception, iaEnabled, state.flash != FlashSetting.OFF,
-                            state.zoomRatio, state.hasOpticalTele,
+                            state.zoomRatio, state.hasOpticalTele, habits.map { it.habit }.toSet(),
                         )
                         if (plan.strategy != CaptureStrategy.SINGLE && state.processing == null) {
                             InfoChip(plan.description, onClick = { explanation = plan.reason })
@@ -939,6 +948,9 @@ private fun openPhoto(context: Context, uri: Uri) {
 }
 
 private const val MANUAL_FOCUS_HOLD_MS = 6000L
+
+/** Aviso si se intenta salir del visor mientras se hace una foto. */
+private const val WAIT_TEXT = "Un momento: estoy terminando la foto"
 
 /** Lo que dura en pantalla un aviso de lo aprendido. */
 private const val INFO_MS = 4000L

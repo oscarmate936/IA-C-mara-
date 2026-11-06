@@ -6,6 +6,7 @@ import com.iacamara.app.perception.FrameMath
 import com.iacamara.app.perception.NRect
 import com.iacamara.app.perception.SaliencyMap
 import com.iacamara.app.perception.SceneStructure
+import com.iacamara.app.perception.SceneRules
 import com.iacamara.app.perception.SceneType
 import com.iacamara.app.perception.Segment
 import com.iacamara.app.perception.SubjectKind
@@ -184,7 +185,7 @@ object CompositionEngine {
                     criteria["sin cortes"] = min(criteria["sin cortes"] ?: 1f, value)
                     problems += Problem(value, 1.05f, text, "cortes")
                 }
-                if (input.scene == SceneType.RETRATO && input.faces.size <= 1 && armsAgainstBody(pose)) {
+                if (input.scene == SceneType.RETRATO && SceneRules.mainFaces(input.faces).size <= 1 && armsAgainstBody(pose)) {
                     problems += Problem(0.75f, 0.45f, "Pide que separe un poco los brazos del cuerpo: la figura queda más estilizada", "pose")
                 }
             }

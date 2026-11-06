@@ -80,4 +80,9 @@ Cada caso tiene su prueba automática (`ColorFidelityTest`, `BurstFeaturesTest`)
 | «Sujeto» en escenas sin protagonista | Sin persona, animal ni objeto conocido, marcaba como sujeto lo «menos aburrido» (la carretera, el cielo) y pedía centrarlo | Solo es sujeto lo que destaca de verdad (valor real del modelo, sin salir de dos bordes, no media foto); en arquitectura y paisaje se compone con líneas y horizonte |
 | Ropa tendida de noche | Se tomaba por una persona o una cara | Caras y personas confirmadas por dos modelos |
 | Crítica después de cada foto | No aparecía nunca: la foto reducida para analizarla no se llegaba a leer | Se lee bien (un error al pedir solo el tamaño de la foto) |
+| Ir a Ajustes y volver | Se recargaban todos los modelos de IA (varios segundos) y se cancelaba lo que se estaba mejorando | La cámara y la IA siguen cargadas; al salir del visor solo se apaga la cámara |
+| Salir mientras se hace una foto de noche o HDR | La foto podía perderse | Mientras se hace una foto, Ajustes y Atrás esperan («Un momento: estoy terminando la foto») |
+| Retrato con gente lejos al fondo | YuNet ve caras pequeñas al fondo y la escena pasaba a «Grupo» | Solo cuentan las caras de tamaño parecido a la principal (un grupo lejano sigue siendo grupo) |
+| Disparo inteligente en grupos de más de 5 | Esperaba medir los ojos de todas las caras (el modelo de ojos mide 5 como mucho y no las diminutas): no disparaba nunca | Ojos abiertos en todas las caras que se pueden medir |
+| Error al guardar una foto procesada | Quedaba una foto «pendiente» invisible ocupando sitio; si fallaban solo los datos EXIF, se perdía la foto | Se borra la entrada a medias; si solo fallan los datos, la foto se queda |
 | La cara de un perro | YuNet, que ve muchas más caras, le da hasta 0,74 | No cuenta una «cara» dentro de un animal y de ninguna persona |

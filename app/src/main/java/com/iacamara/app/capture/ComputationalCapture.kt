@@ -167,12 +167,31 @@ object PhotoSaver {
     }
 
     /**
+     * Escribe una entrada nueva y la publica. Si algo falla a mitad (sin espacio, error al escribir), se
+     * borra: si no, quedaría una foto "pendiente" invisible ocupando sitio.
+     */
+    private inline fun writeEntry(context: Context, uri: Uri, write: () -> Unit): Uri {
+        try {
+            write()
+            publish(context, uri)
+            return uri
+        } catch (e: Throwable) {
+            runCatching { context.contentResolver.delete(uri, null, null) }
+            throw e
+        }
+    }
+
+    /**
      * Guarda un JPEG tal cual (la mejor foto de una ráfaga: conserva su calidad y su EXIF). Si el EXIF no
      * dice cómo girarla (algunos móviles no lo ponen en las fotos que se piden a memoria), se añade.
      */
     fun saveJpeg(context: Context, jpeg: ByteArray, rotationDegrees: Int): Uri? {
         val uri = newEntry(context) ?: return null
-        context.contentResolver.openOutputStream(uri)?.use { it.write(jpeg) }
+        return writeEntry(context, uri) { writeJpeg(context, uri, jpeg, rotationDegrees) }
+    }
+
+    private fun writeJpeg(context: Context, uri: Uri, jpeg: ByteArray, rotationDegrees: Int) {
+        context.contentResolver.openOutputStream(uri)?.use { it.write(jpeg) } ?: error("no se pudo abrir la foto")
         val wanted = orientation(rotationDegrees)
         val current = runCatching {
             ExifInterface(ByteArrayInputStream(jpeg)).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED)
@@ -187,8 +206,6 @@ object PhotoSaver {
                 }
             }
         }
-        publish(context, uri)
-        return uri
     }
 
     /**
@@ -223,7 +240,17 @@ object PhotoSaver {
         suffix: String = "",
     ): Uri? {
         val uri = newEntry(context, suffix) ?: return null
-        context.contentResolver.openOutputStream(uri)?.use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+        return writeEntry(context, uri) { writeProcessed(context, uri, bitmap, rotationDegrees, referenceJpeg, software) }
+    }
+
+    private fun writeProcessed(context: Context, uri: Uri, bitmap: Bitmap, rotationDegrees: Int, referenceJpeg: ByteArray?, software: String) {
+        val written = context.contentResolver.openOutputStream(uri)?.use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+        if (written != true) error("no se pudo guardar la foto")
+        // Los datos (EXIF) son lo de menos: si fallan, la foto se queda igualmente.
+        runCatching { writeExif(context, uri, rotationDegrees, referenceJpeg, software) }
+    }
+
+    private fun writeExif(context: Context, uri: Uri, rotationDegrees: Int, referenceJpeg: ByteArray?, software: String) {
         context.contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
             val exif = ExifInterface(pfd.fileDescriptor)
             if (referenceJpeg != null) {
@@ -236,8 +263,6 @@ object PhotoSaver {
             exif.setAttribute(ExifInterface.TAG_SOFTWARE, "IA Cámara · $software")
             exif.saveAttributes()
         }
-        publish(context, uri)
-        return uri
     }
 
     private fun orientation(degrees: Int): Int = when (((degrees % 360) + 360) % 360) {

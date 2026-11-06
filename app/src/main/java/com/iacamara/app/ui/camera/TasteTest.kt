@@ -71,6 +71,7 @@ fun TasteTestDialog(shot: EnhancedShot, onDone: (String?) -> Unit) {
     var round by remember { mutableIntStateOf(0) }
     var selected by remember { mutableIntStateOf(0) }
     var learned by remember { mutableStateOf<String?>(null) }
+    var loadFailed by remember { mutableStateOf(false) }
     val photo by produceState<SmallPhoto?>(null, shot.original) {
         value = withContext(Dispatchers.IO) {
             runCatching {
@@ -84,6 +85,7 @@ fun TasteTestDialog(shot: EnhancedShot, onDone: (String?) -> Unit) {
                 }
             }.getOrNull()
         }
+        loadFailed = value == null
     }
     // El ajuste de esta ronda y sus versiones reveladas (en orden aleatorio, para no favorecer una posición).
     var dimension by remember { mutableStateOf<Dimension?>(null) }
@@ -143,10 +145,11 @@ fun TasteTestDialog(shot: EnhancedShot, onDone: (String?) -> Unit) {
                     .fillMaxWidth(),
             ) {
                 val current = options.getOrNull(selected)
-                if (current != null) {
-                    Image(current.image, contentDescription = "Versión ${selected + 1}", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
-                } else {
-                    CircularProgressIndicator(color = Color.White)
+                when {
+                    current != null ->
+                        Image(current.image, contentDescription = "Versión ${selected + 1}", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                    loadFailed -> Text("No se pudo abrir la foto original (¿la has borrado?)", color = Color.White, fontSize = 14.sp)
+                    else -> CircularProgressIndicator(color = Color.White)
                 }
             }
             learned?.let { Text(it, color = Color(0xFF7CD992), fontSize = 12.sp, modifier = Modifier.padding(4.dp)) }

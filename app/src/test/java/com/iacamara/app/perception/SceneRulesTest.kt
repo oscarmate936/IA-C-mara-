@@ -44,6 +44,17 @@ class SceneRulesTest {
 
     @Test fun retrato() = assertEquals(SceneType.RETRATO, SceneRules.classify(inputs(faces = listOf(face))))
 
+    @Test
+    fun genteLejosAlFondoNoConvierteUnRetratoEnGrupo() {
+        // El detector de caras ve también a tres personas pequeñas que pasan lejos.
+        val background = listOf(NRect(0.05f, 0.2f, 0.07f, 0.22f), NRect(0.8f, 0.25f, 0.82f, 0.27f), NRect(0.9f, 0.2f, 0.92f, 0.22f))
+        assertEquals(SceneType.RETRATO, SceneRules.classify(inputs(faces = listOf(face) + background)))
+        // Un grupo lejano (todas las caras pequeñas y parecidas) sí es un grupo.
+        val far = (0 until 6).map { i -> NRect(0.1f + i * 0.13f, 0.4f, 0.13f + i * 0.13f, 0.43f) }
+        assertEquals(SceneType.GRUPO, SceneRules.classify(inputs(faces = far)))
+        assertEquals(1, SceneRules.mainFaces(listOf(face) + background).size)
+    }
+
     @Test fun grupo() = assertEquals(SceneType.GRUPO, SceneRules.classify(inputs(faces = listOf(face, face, face))))
 
     @Test fun mascota() = assertEquals(

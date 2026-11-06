@@ -16,7 +16,11 @@ import androidx.camera.extensions.ExtensionMode
 import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.lifecycle.ProcessCameraProvider
 import com.iacamara.app.BuildConfig
+import com.iacamara.app.learning.TipLearner
 import com.iacamara.app.perception.onnx.AcceleratorStore
+import com.iacamara.app.settings.AppPrefs
+import com.iacamara.app.settings.HabitBook
+import com.iacamara.app.settings.LearningBook
 import com.iacamara.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -42,7 +46,27 @@ object DeviceDiagnostics {
             append(cameraX).append('\n')
             append(camera2).append('\n')
             append(runCatching { AcceleratorStore.get(context).report() }.getOrDefault(""))
+            append('\n').append(runCatching { learningSection(context) }.getOrDefault(""))
         }
+    }
+
+    /** Lo que la app ha aprendido de ti (Fase 7) y tus hábitos: para ajustar el aprendizaje en el pulido. */
+    private fun learningSection(context: Context): String = buildString {
+        append("== APRENDIZAJE ==\n")
+        val prefs = AppPrefs(context)
+        val learning = LearningBook.get(context)
+        line("Mejora automática", prefs.enhance.label)
+        line("Aprender de mis fotos", yesNo(prefs.learning))
+        val styles = learning.style.summary()
+        if (styles.isEmpty()) line("Tu estilo", "todavía nada")
+        styles.forEach { (group, g) ->
+            val look = g.style.describe().ifEmpty { "como la receta" }
+            line(group.label, "$look · ${g.choices} elecciones, ${g.ratings} valoraciones, ${g.photos} fotos")
+        }
+        line("Ya dominas", learning.tips.mastered().joinToString { TipLearner.skillLabel(it) }.ifEmpty { "—" })
+        line("Consejos silenciados", learning.tips.mutedList(System.currentTimeMillis()).size.toString())
+        line("Hábitos", HabitBook.get(context).active().joinToString { "${it.habit.label} (${it.text})" }.ifEmpty { "ninguno" })
+        learning.log.recent(5).forEach { append("  · ").append(it.text).append('\n') }
     }
 
     private fun deviceSection(context: Context): String = buildString {
