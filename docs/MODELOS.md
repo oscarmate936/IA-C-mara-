@@ -72,13 +72,16 @@ Notas:
   selección incluida: 161/161 imágenes (YOLO11s, 975 detecciones; YOLOE, 375). Simulados en 16 bits: 8/8 y 7/7.
   YOLO11s de 8 bits (Honor): 57/58. YOLOE de 8 bits sigue sin pasar (22/50).
 - **Calor.** Con el móvil caliente la IA se reduce sola: moderado → todo más espaciado; grave → además fuera YOLOE,
-  el cuerpo y la estética; crítico → solo caras, objetos, ojos y luz. El visor lo avisa («Móvil muy caliente: IA
+  el cuerpo y la estética si van en el procesador; crítico → también la escena y la saliencia si van en el
+  procesador (lo que va en el NPU o la GPU apenas calienta y sigue). Un modelo apagado hace una pasada cuando su
+  prueba de acelerador necesita una imagen, para poder pasar al NPU aunque haga calor. El visor lo avisa («Móvil muy caliente: IA
   reducida»). Con calor se sigue probando el NPU (pasar un modelo al NPU es justo lo que enfría el móvil) pero no la
   GPU (se deja para el próximo arranque); en temperatura crítica las pruebas esperan.
 - **Lo validado se conserva entre versiones.** Al instalar una versión nueva, lo que ya funcionaba en el NPU o la
   GPU se sigue usando sin volver a probarlo; solo se reintenta lo que falló. Un modelo se vuelve a probar entero si
   cambia su archivo (firma por tamaño) y todos si cambian las librerías de IA (ONNX Runtime/QNN, MediaPipe) o la
-  forma de probar. En Diagnóstico, «Volver a probar los aceleradores» lo borra todo.
+  forma de probar. Un acelerador que cerró la app al probarlo no se reintenta al actualizar (se cerraría otra vez).
+  En Diagnóstico, «Volver a probar los aceleradores» lo borra todo.
 - **Comprobación de respaldo.** Si en 25 s no aparece ninguna imagen útil (un detector en una calle vacía, las caras
   sin nadie a la vista), se compara la salida entera de la red: para los YOLO, las cajas y las puntuaciones por
   separado (si no, las cajas pesarían tanto que un acelerador que estropeara solo las puntuaciones pasaría); para

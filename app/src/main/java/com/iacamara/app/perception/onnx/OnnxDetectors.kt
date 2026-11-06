@@ -79,6 +79,9 @@ class OnnxModel(context: Context, private val assetPath: String, val key: String
             s.run(mapOf(inputName to tensor)).use { result -> result.get(0).value }
         }
 
+    /** Una prueba de acelerador espera una imagen real de este modelo. */
+    val wantsSample: Boolean get() = sampleWanted && lastSample == null
+
     fun requestSample() {
         sampleWanted = true
     }

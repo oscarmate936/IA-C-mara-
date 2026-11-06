@@ -403,19 +403,26 @@ class PerceptionAnalyzer(
         // su último resultado: así la comparación es justa.
         val paused = accelerator.measuring
 
+        // Con calor solo se apaga lo que va en el procesador (lo del NPU o la GPU apenas calienta). Un modelo
+        // apagado se ejecuta igualmente si su prueba de acelerador necesita una imagen: si no, nunca pasaría
+        // al NPU mientras haga calor.
+        val runYoloe = !hot || onAccelerator(yoloeModel) || yoloeModel?.wantsSample == true
+        val runAesthetic = !hot || onAccelerator(aestheticModel) || aestheticModel?.wantsSample == true
+        val runPose = !hot || poseLandmarker.onGpu
+        val runClip = !critical || onAccelerator(clipModel) || clipModel?.wantsSample == true
+        val runSaliency = !critical || onAccelerator(saliencyModel) || saliencyModel?.wantsSample == true
+
         // Lo que dejó de ejecutarse por el calor no puede seguir valiendo (si no, el coach hablaría de cosas
         // que ya no están: «"Piscina" distrae en el borde» con el móvil apuntando a otro sitio).
-        if (hot) {
-            lastOpenVocab = emptyList()
-            lastPose = null
-            lastAesthetic = null
-        }
-        if (critical) {
+        if (!runYoloe) lastOpenVocab = emptyList()
+        if (!runPose) lastPose = null
+        if (!runAesthetic) lastAesthetic = null
+        if (!runSaliency) {
             lastSaliencyGrid = null
             lastSaliencyRaw = null
-            lastStructure = null
-            lastSceneScores = emptyMap()
         }
+        if (critical) lastStructure = null
+        if (!runClip) lastSceneScores = emptyMap()
 
         // Caras: casi en cada fotograma. Solo cuentan cuando se confirman (más abajo).
         val detector = faceDetector
@@ -426,8 +433,8 @@ class PerceptionAnalyzer(
 
         // Tareas medianas: escena (CLIP) o estética (NIMA), la que más atrasada vaya.
         val medium = listOfNotNull(
-            clip?.takeIf { !critical }?.let { "escena" to labelsClock.overdue(now, slowdown) },
-            aestheticScorer?.takeIf { !hot }?.let { "estética" to aestheticClock.overdue(now, slowdown) },
+            clip?.takeIf { runClip }?.let { "escena" to labelsClock.overdue(now, slowdown) },
+            aestheticScorer?.takeIf { runAesthetic }?.let { "estética" to aestheticClock.overdue(now, slowdown) },
         ).filter { it.second >= 1f && !paused }.maxByOrNull { it.second }?.first
         when (medium) {
             "escena" -> timed(labelsClock, now) { runClip(bitmap) }
@@ -440,7 +447,7 @@ class PerceptionAnalyzer(
         }
         // Cuerpo: solo si puede haber personas a la vista (también sirve para confirmarlas).
         val people = rawFaces.isNotEmpty() || lastObjects.any { it.label == "person" }
-        if (people && !paused && !hot && poseClock.overdue(now, slowdown) >= 1f) {
+        if (people && !paused && runPose && poseClock.overdue(now, slowdown) >= 1f) {
             timed(poseClock, now) { runPose(mpImage) }
         } else if (!people) {
             lastPose = null
@@ -449,8 +456,8 @@ class PerceptionAnalyzer(
         // Como mucho una tarea pesada por fotograma: la que más atrasada vaya.
         val heavy = listOfNotNull(
             yolo?.let { "yolo" to yoloClock.overdue(now, slowdown) },
-            yoloe?.takeIf { !hot }?.let { "yoloe" to yoloeClock.overdue(now, slowdown) },
-            saliencyDetector?.takeIf { !critical }?.let { "saliencia" to saliencyClock.overdue(now, slowdown) },
+            yoloe?.takeIf { runYoloe }?.let { "yoloe" to yoloeClock.overdue(now, slowdown) },
+            saliencyDetector?.takeIf { runSaliency }?.let { "saliencia" to saliencyClock.overdue(now, slowdown) },
         ).filter { it.second >= 1f && !paused }.maxByOrNull { it.second }?.first
         when (heavy) {
             "yolo" -> timed(yoloClock, now) { runYolo(bitmap) }
@@ -727,6 +734,9 @@ class PerceptionAnalyzer(
     }
 
     @Volatile private var thermal = PowerManager.THERMAL_STATUS_NONE
+
+    /** El modelo va en el NPU o la GPU (apenas calienta: no hace falta apagarlo con calor). */
+    private fun onAccelerator(model: OnnxModel?): Boolean = model != null && model.backend != Backend.CPU
     private val hot: Boolean get() = thermal >= PowerManager.THERMAL_STATUS_SEVERE
     private val critical: Boolean get() = thermal >= PowerManager.THERMAL_STATUS_CRITICAL
 

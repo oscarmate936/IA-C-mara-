@@ -61,9 +61,15 @@ class AcceleratorStore private constructor(context: Context) {
             val accelerated = all.filter { (k, v) -> k.startsWith("elegido:") && v != Backend.CPU.name }
                 .keys.map { it.removePrefix("elegido:") }.toSet()
             val edit = sp.edit()
+            // Los aceleradores que cerraron la app al probarlos tampoco se reintentan (se cerraría otra vez con cada
+            // versión); eso solo se vuelve a probar si cambia el modelo o las librerías.
+            val crashed = all.filter { (k, v) -> k.startsWith("error:") && (v as? String)?.contains(CRASH_TEXT) == true }
+                .keys.map { it.removePrefix("error:") }.toSet()
             for (k in all.keys) {
                 val model = k.split(':').getOrNull(1) ?: continue
-                val keep = model in accelerated && (k.startsWith("elegido:") || k.startsWith("ms:"))
+                val modelBackend = k.substringAfter(':')
+                val keep = (model in accelerated && (k.startsWith("elegido:") || k.startsWith("ms:"))) ||
+                    ((k.startsWith("roto:") || k.startsWith("error:")) && modelBackend in crashed)
                 if (!keep && (k.startsWith("elegido:") || k.startsWith("ms:") || k.startsWith("roto:") || k.startsWith("error:"))) {
                     edit.remove(k)
                 }
@@ -78,7 +84,7 @@ class AcceleratorStore private constructor(context: Context) {
             for (key in pending) {
                 val probe = key.removePrefix(PROBE_PREFIX)
                 edit.putBoolean("roto:$probe", true)
-                edit.putString("error:$probe", "la app se cerró al probarlo")
+                edit.putString("error:$probe", CRASH_TEXT)
                 edit.remove(key)
             }
             edit.commit()
@@ -189,6 +195,7 @@ class AcceleratorStore private constructor(context: Context) {
     companion object {
         private const val KEY_VERSION = "version"
         private const val KEY_LIBS = "librerias"
+        private const val CRASH_TEXT = "la app se cerró al probarlo"
 
         /**
          * Librerías de IA y forma de probar: si cambian, todo se vuelve a probar. Subir [LOGIC] cuando cambie la
