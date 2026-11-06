@@ -385,15 +385,16 @@ class PerceptionAnalyzer(
         val start = SystemClock.elapsedRealtime()
         val mpImage: MPImage = BitmapImageBuilder(bitmap).build()
 
-        // Caras: casi en cada fotograma (también mientras se mide un acelerador: hacen falta siempre).
-        // Solo cuentan cuando se confirman (más abajo).
+        // Mientras se mide la velocidad de un acelerador (unos segundos), los modelos esperan y se usa
+        // su último resultado: así la comparación es justa.
+        val paused = accelerator.measuring
+
+        // Caras: casi en cada fotograma. Solo cuentan cuando se confirman (más abajo).
         val detector = faceDetector
-        if (detector != null && faceClock.overdue(now, slowdown) >= 1f) {
+        if (detector != null && !paused && faceClock.overdue(now, slowdown) >= 1f) {
             timed(faceClock, now) { lastRawFaces = detector.detect(bitmap) }
         }
         val rawFaces = lastRawFaces
-        // Mientras se mide la velocidad de un acelerador, el resto de modelos espera (comparación justa).
-        val paused = accelerator.measuring
 
         // Tareas medianas: escena (CLIP) o estética (NIMA), la que más atrasada vaya.
         val medium = listOfNotNull(
