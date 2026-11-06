@@ -8,6 +8,15 @@ import kotlin.math.min
 class LightAnalyzer {
 
     private var buffer = IntArray(0)
+    private var bufferW = 0
+    private var bufferH = 0
+
+    /**
+     * Luz sobre la cara del último fotograma analizado.
+     * @param face caja de la cara en el encuadre vertical; @param rotation giro del fotograma del modelo.
+     */
+    fun faceLight(face: NRect, rotation: Int): FaceLight? =
+        if (bufferW == 0) null else FaceLight.measure(buffer, bufferW, bufferH, face, rotation)
 
     /** @param subject zona del sujeto en coordenadas normalizadas de este bitmap (o null = centro). */
     fun analyze(bitmap: Bitmap, subject: NRect?): LightInfo {
@@ -15,6 +24,8 @@ class LightAnalyzer {
         val h = bitmap.height
         if (buffer.size != w * h) buffer = IntArray(w * h)
         bitmap.getPixels(buffer, 0, w, 0, 0, w, h)
+        bufferW = w
+        bufferH = h
 
         val zone = subject ?: NRect(0.3f, 0.3f, 0.7f, 0.7f)
         val sx0 = (zone.left * w).toInt()

@@ -49,9 +49,12 @@ data class SceneStructure(
     /** Fuerza de la simetría y del reflejo (0–1), para depurar. */
     val symmetry: Float = 0f,
     val reflection: Float = 0f,
+    /** Líneas casi verticales largas (postes, farolas, troncos, esquinas): para ver si "salen" de una cabeza. */
+    val verticals: List<Segment> = emptyList(),
 ) {
     fun map(f: (Float, Float) -> Pair<Float, Float>): SceneStructure = copy(
         leadingLines = leadingLines.map { it.map(f) },
+        verticals = verticals.map { it.map(f) },
         vanishingPoint = vanishingPoint?.let { f(it.first, it.second) },
         symmetryAxis = symmetryAxis?.map(f),
         reflectionAxis = reflectionAxis?.map(f),
@@ -70,6 +73,7 @@ data class StructureReading(
     /** Posición y (0..1) de la mejor línea de reflejo y su fuerza (−1..1). */
     val reflectionY: Float,
     val reflection: Float,
+    val verticals: List<Segment> = emptyList(),
 )
 
 /**
@@ -106,9 +110,10 @@ object StructureAnalyzer {
         val b = FloatArray(n) { (argb[it] and 255).toFloat() }
         val channels = listOf(blur3(r, w, h), blur3(g, w, h), blur3(b, w, h))
         val luma = FloatArray(n) { 0.299f * channels[0][it] + 0.587f * channels[1][it] + 0.114f * channels[2][it] }
-        val (lines, vp) = leadingLines(channels, w, h)
+        val segments = detectSegments(channels, w, h)
+        val (lines, vp) = leadingLines(segments, w, h)
         val sym = symmetry(luma, w, h, exclude)
-        return StructureReading(lines, vp, sym.first, sym.second, sym.third, sym.fourth)
+        return StructureReading(lines, vp, sym.first, sym.second, sym.third, sym.fourth, verticalLines(segments, w, h))
     }
 
     // ---------------------------------------------------------------- líneas guía
@@ -150,8 +155,17 @@ object StructureAnalyzer {
     }
 
     /** Detecta segmentos largos y elige las líneas guía (y su punto de fuga, si lo hay). */
-    internal fun leadingLines(channels: List<FloatArray>, w: Int, h: Int): Pair<List<Segment>, Pair<Float, Float>?> {
-        val segments = detectSegments(channels, w, h)
+    internal fun leadingLines(channels: List<FloatArray>, w: Int, h: Int): Pair<List<Segment>, Pair<Float, Float>?> =
+        leadingLines(detectSegments(channels, w, h), w, h)
+
+    /** Líneas casi verticales (a menos de 12° de la vertical) y largas: como mucho 6, las más claras. */
+    private fun verticalLines(segments: List<RawLine>, w: Int, h: Int): List<Segment> =
+        segments.filter { it.tilt >= 78f && abs(it.y2 - it.y1) >= 0.15f * h }
+            .sortedByDescending { it.strength * it.lengthPx }
+            .take(6)
+            .map { Segment((it.x1 + 0.5f) / w, (it.y1 + 0.5f) / h, (it.x2 + 0.5f) / w, (it.y2 + 0.5f) / h, it.strength) }
+
+    private fun leadingLines(segments: List<RawLine>, w: Int, h: Int): Pair<List<Segment>, Pair<Float, Float>?> {
         val diag = hypot(w.toFloat(), h.toFloat())
         val diagonals = segments.filter { it.tilt in DIAGONAL_MIN_DEG..DIAGONAL_MAX_DEG }
         fun norm(r: RawLine) = Segment((r.x1 + 0.5f) / w, (r.y1 + 0.5f) / h, (r.x2 + 0.5f) / w, (r.y2 + 0.5f) / h, r.strength)
@@ -557,6 +571,7 @@ class StructureStabilizer {
             },
             symmetry = symmetry,
             reflection = reflection,
+            verticals = r.verticals,
         )
     }
 

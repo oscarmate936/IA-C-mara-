@@ -39,8 +39,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iacamara.app.settings.AppPrefs
 import com.iacamara.app.settings.EnhanceMode
+import com.iacamara.app.settings.HabitBook
 
-/** Ajustes de la app: mejora automática y acceso al diagnóstico. */
+/** Ajustes de la app: mejora automática, fotógrafo veterano (crítica y hábitos), RAW y diagnóstico. */
 @Composable
 fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
     val context = LocalContext.current
@@ -48,6 +49,9 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
     var enhance by remember { mutableStateOf(prefs.enhance) }
     var geometry by remember { mutableStateOf(prefs.enhanceGeometry) }
     var raw by remember { mutableStateOf(prefs.raw) }
+    var critique by remember { mutableStateOf(prefs.critique) }
+    val habitBook = remember { HabitBook.get(context.applicationContext) }
+    var habits by remember { mutableStateOf(habitBook.active()) }
     BackHandler(onBack = onBack)
 
     Column(
@@ -116,6 +120,42 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
                     },
                 )
             }
+
+            Spacer(Modifier.height(12.dp))
+            Section("Fotógrafo veterano")
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("Crítica después de cada foto", color = Color.White, fontSize = 15.sp)
+                    Text(
+                        "Nota por apartados (composición, luz, nitidez, momento y color), lo mejor de la foto, " +
+                            "2–3 consejos para la próxima vez y por qué se usó esa técnica.",
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 12.sp,
+                    )
+                }
+                Switch(checked = critique, onCheckedChange = {
+                    critique = it
+                    prefs.critique = it
+                })
+            }
+            Spacer(Modifier.height(4.dp))
+            Text("Tus hábitos", color = Color.White, fontSize = 15.sp)
+            Note(
+                "La app recuerda, solo en este móvil, los fallos de tus últimas fotos. Cuando uno se repite " +
+                    "(4 de las últimas 10) te avisa justo cuando vuelve a pasar y, si puede, lo compensa: " +
+                    "con fotos movidas hace 4 y elige la más nítida.",
+            )
+            if (habits.isEmpty()) {
+                Text("Ningún fallo se repite por ahora.", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+            } else {
+                habits.forEach { h ->
+                    Text("• ${h.habit.label}: ${h.text}", color = Color.White, fontSize = 13.sp)
+                }
+            }
+            OutlinedButton(onClick = {
+                habitBook.clear()
+                habits = emptyList()
+            }) { Text("Olvidar mis hábitos") }
 
             Spacer(Modifier.height(12.dp))
             Section("Modo PRO")

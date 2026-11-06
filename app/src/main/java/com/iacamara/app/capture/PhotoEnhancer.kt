@@ -3,7 +3,6 @@ package com.iacamara.app.capture
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Matrix
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
 import com.iacamara.app.imaging.AutoEnhance
@@ -135,31 +134,7 @@ class PhotoEnhancer(private val context: Context) {
     }
 
     /** Pone la foto derecha según su EXIF (giros y espejos). */
-    private fun orient(bitmap: Bitmap, orientation: Int): Bitmap {
-        val m = Matrix()
-        when (orientation) {
-            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> m.setScale(-1f, 1f)
-            ExifInterface.ORIENTATION_ROTATE_180 -> m.setRotate(180f)
-            ExifInterface.ORIENTATION_FLIP_VERTICAL -> {
-                m.setRotate(180f)
-                m.postScale(-1f, 1f)
-            }
-            ExifInterface.ORIENTATION_TRANSPOSE -> {
-                m.setRotate(90f)
-                m.postScale(-1f, 1f)
-            }
-            ExifInterface.ORIENTATION_ROTATE_90 -> m.setRotate(90f)
-            ExifInterface.ORIENTATION_TRANSVERSE -> {
-                m.setRotate(-90f)
-                m.postScale(-1f, 1f)
-            }
-            ExifInterface.ORIENTATION_ROTATE_270 -> m.setRotate(-90f)
-            else -> return bitmap
-        }
-        val out = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, m, true)
-        if (out !== bitmap) bitmap.recycle()
-        return out
-    }
+    private fun orient(bitmap: Bitmap, orientation: Int): Bitmap = orientBitmap(bitmap, orientation)
 
     private companion object {
         /** Bajada de nota (NIMA) que se tolera antes de suavizar la mejora. */

@@ -191,6 +191,21 @@ object PhotoSaver {
         return uri
     }
 
+    /**
+     * Guarda en el EXIF de la foto por qué se hizo así (la explicación del Director), para verlo en
+     * los detalles de la foto de la galería.
+     */
+    fun describe(context: Context, uri: Uri, text: String) {
+        if (text.isBlank()) return
+        runCatching {
+            context.contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
+                val exif = ExifInterface(pfd.fileDescriptor)
+                exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, text)
+                exif.saveAttributes()
+            }
+        }
+    }
+
     /** Borra una foto guardada por la app (para "solo la mejorada"). */
     fun delete(context: Context, uri: Uri): Boolean =
         runCatching { context.contentResolver.delete(uri, null, null) > 0 }.getOrDefault(false)

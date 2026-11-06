@@ -188,4 +188,8 @@ data class Perception(
     val sceneScores: Map<SceneType, Float> = emptyMap(),
     /** Nota de estética 1–10 (NIMA, aprendida de fotos puntuadas por personas). */
     val aesthetic: Float? = null,
+    /** Cómo le da la luz a la cara principal. */
+    val faceLight: FaceLight? = null,
+    /** Desenfoque por el pulso previsto si se dispara ahora (píxeles de la foto): giro × exposición × focal. */
+    val blurPx: Float? = null,
 )

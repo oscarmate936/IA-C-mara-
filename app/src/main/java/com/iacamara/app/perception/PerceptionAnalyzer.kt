@@ -158,6 +158,9 @@ class PerceptionAnalyzer(
     private var lastFaceDetails: List<FaceDetail> = emptyList()
     private var lastSubjectCenter: Pair<Float, Float>? = null
     private var lastSubjectMs = 0L
+
+    /** Poca luz en el último análisis: se exige más para dar por buena una cara o una persona. */
+    @Volatile private var lowLight = false
     private var subjectSpeed = 0f
     private var lastStructure: SceneStructure? = null
     private var structurePixels = IntArray(0)
@@ -350,9 +353,9 @@ class PerceptionAnalyzer(
         val w = bitmap.width.toFloat()
         val h = bitmap.height.toFloat()
 
-        // Caras: en cada fotograma (muy rápido).
-        val faces = faceDetector?.detect(mpImage)?.detections().orEmpty()
-            .map { normalize(it.boundingBox(), w, h) }
+        // Caras: en cada fotograma (muy rápido). Solo cuentan cuando se confirman (más abajo).
+        val rawFaces = faceDetector?.detect(mpImage)?.detections().orEmpty()
+            .map { PeopleCheck.RawFace(normalize(it.boundingBox(), w, h), it.categories().firstOrNull()?.score() ?: 0f) }
         // Mientras se mide la velocidad de un acelerador, el resto de modelos espera (comparación justa).
         val paused = accelerator.measuring
 
@@ -365,13 +368,13 @@ class PerceptionAnalyzer(
             "escena" -> timed(labelsClock, now) { runClip(bitmap) }
             "estética" -> timed(aestheticClock, now) { runAesthetic(bitmap) }
         }
-        if (faces.isNotEmpty() && !paused && landmarksClock.overdue(now, slowdown) >= 1f) {
+        if (rawFaces.isNotEmpty() && !paused && landmarksClock.overdue(now, slowdown) >= 1f) {
             timed(landmarksClock, now) { runLandmarks(mpImage) }
-        } else if (faces.isEmpty()) {
+        } else if (rawFaces.isEmpty()) {
             lastFaceDetails = emptyList()
         }
-        // Cuerpo: solo si hay personas a la vista.
-        val people = faces.isNotEmpty() || lastObjects.any { it.label == "person" }
+        // Cuerpo: solo si puede haber personas a la vista (también sirve para confirmarlas).
+        val people = rawFaces.isNotEmpty() || lastObjects.any { it.label == "person" }
         if (people && !paused && poseClock.overdue(now, slowdown) >= 1f) {
             timed(poseClock, now) { runPose(mpImage) }
         } else if (!people) {
@@ -398,15 +401,21 @@ class PerceptionAnalyzer(
             SaliencyMath.mainRegion(SaliencyMap(lastSaliencyW, lastSaliencyH, grid))
         }
 
-        val subjectInModel = chooseSubject(faces, lastObjects, salientModel)
+        // Caras y personas confirmadas por otro modelo (de noche, la ropa tendida no es una persona).
+        val faces = PeopleCheck.faces(rawFaces, lastFaceDetails.map { it.box }, lowLight)
+        val objects = PeopleCheck.people(lastObjects, faces, lastPose, lowLight)
+        val named = PeopleCheck.named(lastOpenVocab, objects, faces, lastPose, lowLight)
+
+        val subjectInModel = chooseSubject(faces, objects, salientModel)
         if (!paused && structureClock.overdue(now, slowdown) >= 1f) {
             timed(structureClock, now) { runStructure(bitmap, subjectInModel?.box) }
         }
         val light = lightAnalyzer.analyze(bitmap, subjectInModel?.box)
+        val faceLight = faces.maxByOrNull { it.area }?.let { lightAnalyzer.faceLight(FrameMath.unrotate(it, modelRotation), modelRotation) }
         val meta = captureMetadata.current()
 
         val scene = sceneStabilizer.update(
-            SceneRules.classify(SceneInputs(front, faces, lastObjects, lastSceneScores, light, meta)),
+            SceneRules.classify(SceneInputs(front, faces, objects, lastSceneScores, light, meta)),
         )
 
         updateSubjectSpeed(subjectInModel, now)
@@ -422,6 +431,7 @@ class PerceptionAnalyzer(
             if (light.highlightClip > 0.08f && !backlit) add(Condition.LUCES_QUEMADAS)
         }
         val conditions = conditionStabilizer.update(raw)
+        lowLight = Condition.POCA_LUZ in conditions
 
         // Todo se devuelve en coordenadas del encuadre vertical de la pantalla (P).
         val toP = { r: NRect -> FrameMath.unrotate(r, modelRotation) }
@@ -438,7 +448,7 @@ class PerceptionAnalyzer(
             timestampMs = now,
             saliency = saliencyP,
             faceDetails = lastFaceDetails.map { it.copy(box = toP(it.box)) },
-            namedObjects = lastOpenVocab.map { it.copy(label = spanishOpen(it.label), box = toP(it.box)) },
+            namedObjects = named.map { it.copy(label = spanishOpen(it.label), box = toP(it.box)) },
             timings = mapOf(
                 yoloLabel() to yoloClock.averageMs.toInt(),
                 "YOLOE ${backendOf(yoloeModel)}" to yoloeClock.averageMs.toInt(),
@@ -453,6 +463,8 @@ class PerceptionAnalyzer(
             pose = lastPose?.map { x, y -> FrameMath.unrotate(x, y, modelRotation) },
             sceneScores = lastSceneScores,
             aesthetic = lastAesthetic,
+            faceLight = faceLight,
+            blurPx = meta?.let { BlurRisk.blurPixels(motion.shake, it.exposureNs, zoomRatio) },
         )
     }
 

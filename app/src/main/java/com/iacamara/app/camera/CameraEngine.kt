@@ -39,7 +39,14 @@ import com.iacamara.app.capture.ShotInfo
 import com.iacamara.app.capture.JpegFrameSource
 import com.iacamara.app.capture.PhotoSaver
 import com.iacamara.app.capture.captureJpeg
+import com.iacamara.app.capture.loadSmallUpright
 import com.iacamara.app.capture.rotated
+import com.iacamara.app.coach.Critique
+import com.iacamara.app.coach.Habit
+import com.iacamara.app.coach.HabitCount
+import com.iacamara.app.coach.PhotoCritic
+import com.iacamara.app.coach.PhotoStats
+import com.iacamara.app.coach.ShotReview
 import com.iacamara.app.director.CapturePlan
 import com.iacamara.app.director.CaptureStrategy
 import com.iacamara.app.imaging.BurstPipeline
@@ -52,6 +59,7 @@ import com.iacamara.app.perception.NRect
 import com.iacamara.app.perception.CaptureMetadata
 import com.iacamara.app.settings.AppPrefs
 import com.iacamara.app.settings.EnhanceMode
+import com.iacamara.app.settings.HabitBook
 import kotlinx.coroutines.asCoroutineDispatcher
 import com.iacamara.app.util.await
 import kotlinx.coroutines.CoroutineScope
@@ -157,6 +165,8 @@ data class CameraUiState(
     val enhancing: Int = 0,
     /** En PRO se guarda también el RAW (DNG). */
     val rawActive: Boolean = false,
+    /** Crítica del fotógrafo de la última foto (se muestra unos segundos). */
+    val critique: Critique? = null,
 )
 
 /**
@@ -205,6 +215,18 @@ class CameraEngine(private val context: Context) {
      * uno ocupa varias copias de la foto en memoria y, juntos, en un sensor de muchos megapíxeles no caben.
      */
     private val heavyWork = Mutex()
+
+    /** Tus hábitos de foto (en este móvil): los usan el coach y el Director, y cada foto los actualiza. */
+    private val habitTracker = HabitBook.get(context)
+    private val _habits = MutableStateFlow(habitTracker.active())
+    val habits: StateFlow<List<HabitCount>> = _habits.asStateFlow()
+
+    /** Vuelve a leer los hábitos (p. ej. después de olvidarlos en los ajustes). */
+    fun refreshHabits() {
+        _habits.value = habitTracker.active()
+    }
+
+    fun clearCritique() = _state.update { it.copy(critique = null) }
 
     /** Se debe llamar antes de start(). */
     fun setAnalyzer(analyzer: ImageAnalysis.Analyzer?) {
@@ -436,13 +458,56 @@ class CameraEngine(private val context: Context) {
      * Dispara con la técnica que ha decidido el Director IA.
      * @param shot lo que sabía la cámara al disparar, para la mejora automática (null = sin mejora).
      */
-    fun capture(plan: CapturePlan, shot: ShotInfo? = null) {
+    fun capture(plan: CapturePlan, shot: ShotInfo? = null, review: ShotReview? = null) {
         if (plan.strategy == CaptureStrategy.SINGLE) {
-            takePhoto(shot)
+            takePhoto(shot, review)
             return
         }
         if (_state.value.capturing) return
-        scope.launch { runComputational(plan, shot) }
+        scope.launch { runComputational(plan, shot, review) }
+    }
+
+    /**
+     * Después de guardar una foto: primero se escribe en su EXIF por qué se hizo así (antes de que nadie
+     * más la lea: reescribir el EXIF rehace el archivo), y luego, en segundo plano, la copia mejorada y la
+     * crítica del fotógrafo.
+     */
+    private fun afterSaved(uri: Uri, shot: ShotInfo?, review: ShotReview?, alreadyProcessed: Boolean, mode: PhotoMode) {
+        scope.launch {
+            review?.let { r -> withContext(Dispatchers.IO) { PhotoSaver.describe(context, uri, "${r.technique}: ${r.reason}") } }
+            enhanceLater(uri, shot, alreadyProcessed = alreadyProcessed, mode = mode)
+            reviewLater(uri, review)
+        }
+    }
+
+    /**
+     * Anota los fallos de la foto para los hábitos y prepara la crítica del fotógrafo (luz y color de la
+     * foto guardada, ojos abiertos en la foto final y nota de estética), en segundo plano.
+     */
+    private fun reviewLater(uri: Uri, review: ShotReview?) {
+        review ?: return
+        scope.launch {
+            val critique = withContext(Dispatchers.Default) {
+                val blur = (review.blurPx ?: 0f) * if (review.burst) 0.6f else 1f
+                habitTracker.record(review.flags + if (blur > BLURRY_PX) setOf(Habit.MOVIDA) else emptySet())
+                if (!prefs.critique) return@withContext null
+                runCatching {
+                    val small = loadSmallUpright(context, uri, REVIEW_SIDE) ?: return@runCatching null
+                    try {
+                        val px = IntArray(small.width * small.height)
+                        small.getPixels(px, 0, small.width, 0, 0, small.width, small.height)
+                        val stats = PhotoStats.of(px, small.width, small.height)
+                        val faces = runCatching { faceStates?.invoke(small) }.getOrNull()
+                        val beauty = runCatching { aestheticScorer?.invoke(small) }.getOrNull()
+                        PhotoCritic.critique(review, stats, faces, beauty, habitTracker.active())
+                    } finally {
+                        small.recycle()
+                    }
+                }.getOrNull()
+            }
+            _habits.value = habitTracker.active()
+            if (critique != null) _state.update { it.copy(critique = critique) }
+        }
     }
 
     /**
@@ -471,7 +536,7 @@ class CameraEngine(private val context: Context) {
         }
     }
 
-    private suspend fun runComputational(plan: CapturePlan, shot: ShotInfo?) {
+    private suspend fun runComputational(plan: CapturePlan, shot: ShotInfo?, review: ShotReview?) {
         val mode = _state.value.mode
         val capture = imageCapture ?: return
         _state.update { it.copy(capturing = true, processing = Processing(plan.description, 0f, capturingFrames = true)) }
@@ -509,7 +574,7 @@ class CameraEngine(private val context: Context) {
             _state.update { it.copy(capturing = false, processing = null, lastPhotoUri = uri ?: it.lastPhotoUri) }
             if (uri != null) {
                 val fused = plan.strategy != CaptureStrategy.BEST_OF_BURST
-                enhanceLater(uri, shot, alreadyProcessed = fused, mode = mode)
+                afterSaved(uri, shot, review, alreadyProcessed = fused, mode = mode)
             }
         } catch (e: Throwable) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -809,7 +874,7 @@ class CameraEngine(private val context: Context) {
 
     fun clearMessage() = _state.update { it.copy(message = null) }
 
-    fun takePhoto(shot: ShotInfo? = null) {
+    fun takePhoto(shot: ShotInfo? = null, review: ShotReview? = null) {
         val capture = imageCapture ?: return
         if (_state.value.capturing) return
         val mode = _state.value.mode
@@ -835,7 +900,7 @@ class CameraEngine(private val context: Context) {
                 val isRaw = raw && output.imageFormat == ImageFormat.RAW_SENSOR
                 if (!isRaw) {
                     _state.update { it.copy(lastPhotoUri = output.savedUri ?: it.lastPhotoUri) }
-                    output.savedUri?.let { enhanceLater(it, shot, alreadyProcessed = false, mode = mode) }
+                    output.savedUri?.let { afterSaved(it, shot, review, alreadyProcessed = false, mode = mode) }
                 }
                 if (pending <= 0 && token == shotToken) _state.update { it.copy(capturing = false) }
             }
@@ -880,6 +945,12 @@ class CameraEngine(private val context: Context) {
     companion object {
         const val PHOTO_DIR = "DCIM/IA Camara"
         private const val JPEG_QUALITY = 95
+
+        /** Lado de la foto reducida con la que se hace la crítica. */
+        private const val REVIEW_SIDE = 1000
+
+        /** Desenfoque previsto (píxeles) a partir del cual una foto cuenta como movida para los hábitos. */
+        private const val BLURRY_PX = 4f
         private const val FOCUS_HOLD_SECONDS = 4L
         private const val EXTENSIONS_TIMEOUT_MS = 4000L
 

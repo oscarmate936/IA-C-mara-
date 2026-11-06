@@ -13,6 +13,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -117,6 +118,14 @@ import com.iacamara.app.capture.ShotInfo
 import com.iacamara.app.imaging.CropHint
 import com.iacamara.app.perception.FrameMath
 import com.iacamara.app.perception.SceneType
+import com.iacamara.app.coach.Advice
+import com.iacamara.app.coach.CoachSession
+import com.iacamara.app.coach.CoachTip
+import com.iacamara.app.coach.ExpertInput
+import com.iacamara.app.coach.ExpertRules
+import com.iacamara.app.coach.Habit
+import com.iacamara.app.coach.HabitFlags
+import com.iacamara.app.coach.ShotReview
 import kotlin.math.asin
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -155,6 +164,11 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
     }
     val guideStabilizer = remember { GuideStyleStabilizer() }
     var smartShutter by remember { mutableStateOf(prefs.smartShutter) }
+    // Fotógrafo veterano (Fase 6): un consejo cada vez, crítica de la última foto y explicación de la técnica.
+    val coach = remember { CoachSession() }
+    var coachTip by remember { mutableStateOf<CoachTip?>(null) }
+    var explanation by remember { mutableStateOf<String?>(null) }
+    var critiqueExpanded by remember { mutableStateOf(false) }
     var autoProgress by remember { mutableFloatStateOf(0f) }
     val smart = remember { SmartShutterState() }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
@@ -284,17 +298,49 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
                 crop = guidance?.takeIf { iaEnabled }?.let { cropHint(it, front, deviceDegrees) },
                 front = front,
             )
-            engine.capture(
-                CaptureDirector.plan(
-                    mode = currentState.mode,
-                    perception = perception,
-                    iaEnabled = iaEnabled,
-                    flashOn = currentState.flash != FlashSetting.OFF,
-                    zoomRatio = currentState.zoomRatio,
-                    hasOpticalTele = currentState.hasOpticalTele,
-                ),
-                shot,
+            val plan = CaptureDirector.plan(
+                mode = currentState.mode,
+                perception = perception,
+                iaEnabled = iaEnabled,
+                flashOn = currentState.flash != FlashSetting.OFF,
+                zoomRatio = currentState.zoomRatio,
+                hasOpticalTele = currentState.hasOpticalTele,
+                habits = engine.habits.value.map { it.habit }.toSet(),
             )
+            // Lo que sabía la cámara al disparar: para la crítica del fotógrafo y los hábitos.
+            val g = guidance?.takeIf { iaEnabled }
+            val review = ShotReview(
+                scene = p?.scene ?: SceneType.GENERAL,
+                compositionScore = g?.score,
+                compositionTip = g?.message,
+                criteria = g?.criteria.orEmpty(),
+                blurPx = p?.blurPx,
+                moving = p != null && Condition.MOVIMIENTO in p.conditions,
+                lowLight = p != null && Condition.POCA_LUZ in p.conditions,
+                backlit = p != null && Condition.CONTRALUZ in p.conditions &&
+                    (p.subject?.kind == com.iacamara.app.perception.SubjectKind.CARA || p.subject?.kind == com.iacamara.app.perception.SubjectKind.PERSONA),
+                faceLight = p?.faceLight,
+                technique = plan.description,
+                reason = plan.reason,
+                burst = plan.strategy != CaptureStrategy.SINGLE,
+                flags = if (g == null) {
+                    emptySet()
+                } else {
+                    HabitFlags.of(
+                        criteria = g.criteria,
+                        subjectCenterX = g.subjectCenter?.first,
+                        targetX = g.target?.first,
+                        centeredStyle = g.style == GuideStyle.CENTRO || g.style == GuideStyle.SIMETRIA,
+                        shaky = p != null && Condition.TEMBLOR in p.conditions,
+                        blurry = false,
+                        horizonY = p?.light?.horizonY,
+                        hasSubject = p?.subject != null,
+                    )
+                },
+            )
+            engine.clearCritique()
+            critiqueExpanded = false
+            engine.capture(plan, shot, review)
         }
     }
     LaunchedEffect(Unit) {
@@ -313,6 +359,8 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
             if (p == null || !iaEnabled || !s.analysisActive) {
                 direction = null
                 guidance = null
+                coachTip = null
+                coach.reset()
                 autoProgress = 0f
                 smart.reset()
                 return@collect
@@ -365,6 +413,21 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
             val g = CompositionEngine.evaluate(compositionInput.copy(style = style))
             guidance = g
             engine.rememberAutoExposure()
+
+            // Fotógrafo veterano: reglas de experto + encuadre + Director → un solo consejo, estable.
+            val pitch = level?.takeIf { !it.isFlat }?.let { Math.toDegrees(asin((-it.nz).toDouble().coerceIn(-1.0, 1.0))).toFloat() }
+            val candidates = buildList {
+                addAll(ExpertRules.evaluate(ExpertInput(p, front, pitch)))
+                g.message?.let { msg ->
+                    add(Advice("encuadre.${g.messageKey ?: "general"}", 0.45f + 0.4f * g.severity, listOf(msg), habit = Habit.forComposition(g.messageKey)))
+                }
+                d.tip?.let { tip ->
+                    val withAction = tip.action != null
+                    add(Advice(if (withAction) "director.accion" else "director:${tip.text}", if (withAction) 0.6f else 0.2f, listOf(tip.text), tip.action))
+                }
+                if (g.isGood && g.message == null) add(Advice("encuadre.bueno", 0.3f, CoachSession.GOOD_FRAMING))
+            }
+            coachTip = coach.update(candidates, engine.habits.value, SystemClock.elapsedRealtime())
 
             if (!s.ready) return@collect
             val now = SystemClock.elapsedRealtime()
@@ -421,6 +484,20 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
             auto.reset(auto.generation)
             direction = null
             guidance = null
+        }
+    }
+
+    // La explicación de la técnica se ve unos segundos; la crítica plegada se cierra sola.
+    LaunchedEffect(explanation) {
+        if (explanation != null) {
+            delay(7000)
+            explanation = null
+        }
+    }
+    LaunchedEffect(state.critique, critiqueExpanded) {
+        if (state.critique != null && !critiqueExpanded) {
+            delay(15000)
+            engine.clearCritique()
         }
     }
 
@@ -592,7 +669,9 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
                             state.mode, perception, iaEnabled, state.flash != FlashSetting.OFF,
                             state.zoomRatio, state.hasOpticalTele,
                         )
-                        if (plan.strategy != CaptureStrategy.SINGLE && state.processing == null) InfoChip(plan.description)
+                        if (plan.strategy != CaptureStrategy.SINGLE && state.processing == null) {
+                            InfoChip(plan.description, onClick = { explanation = plan.reason })
+                        }
                         if (state.flash != FlashSetting.OFF && state.hasFlash) {
                             when {
                                 CaptureDirector.ignoresFlash(state.mode) -> InfoChip("Este modo no usa flash")
@@ -606,6 +685,7 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
                     if (iaActive && currentPerception != null) {
                         SceneBadge(perception = currentPerception, reason = direction?.reason)
                     }
+                    explanation?.let { SmallNotice("¿Por qué? $it") }
                     if (iaEnabled && state.ready && !state.analysisActive) SmallNotice("IA en pausa en este modo")
                     iaError?.let { error -> SmallNotice(error) }
                 }
@@ -669,13 +749,21 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                     )
                 }
-                if (iaActive) {
-                    // Prioridad: consejo con acción > corrección del encuadre > "buen encuadre" > consejo de escena.
-                    val g = guidance
-                    val tipToShow = direction?.tip?.takeIf { it.action != null }
-                        ?: g?.message?.let { Tip(it) }
-                        ?: (if (g?.isGood == true) Tip("Buen encuadre: ¡dispara!") else null)
-                        ?: direction?.tip
+                state.critique?.let { critique ->
+                    CritiqueCard(
+                        critique = critique,
+                        expanded = critiqueExpanded,
+                        onToggle = { critiqueExpanded = !critiqueExpanded },
+                        onClose = {
+                            critiqueExpanded = false
+                            engine.clearCritique()
+                        },
+                    )
+                }
+                // Con la crítica desplegada no se muestra el consejo (no se tapan).
+                if (iaActive && !(state.critique != null && critiqueExpanded)) {
+                    // El consejo del fotógrafo veterano: el más importante entre encuadre, Director y reglas de experto.
+                    val tipToShow = coachTip?.let { Tip(it.text, it.action) }
                     tipToShow?.let { tip ->
                         TipChip(
                             tip = tip,
@@ -756,15 +844,16 @@ fun CameraScreen(onOpenSettings: () -> Unit) {
 }
 
 @Composable
-private fun InfoChip(text: String) {
+private fun InfoChip(text: String, onClick: (() -> Unit)? = null) {
     Text(
-        text = text,
+        text = if (onClick != null) "$text  ⓘ" else text,
         color = Color.White,
         fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
             .background(Color.Black.copy(alpha = 0.5f))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 8.dp, vertical = 3.dp),
     )
 }

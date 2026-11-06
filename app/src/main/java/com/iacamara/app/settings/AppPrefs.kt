@@ -43,6 +43,11 @@ class AppPrefs(context: Context) {
         get() = sp.getBoolean(KEY_ENHANCE_GEOMETRY, true)
         set(value) = sp.edit().putBoolean(KEY_ENHANCE_GEOMETRY, value).apply()
 
+    /** Crítica del fotógrafo después de cada foto (nota por apartados y consejos). */
+    var critique: Boolean
+        get() = sp.getBoolean(KEY_CRITIQUE, true)
+        set(value) = sp.edit().putBoolean(KEY_CRITIQUE, value).apply()
+
     /** En el modo PRO, guardar también el RAW (DNG) si el móvil lo permite. */
     var raw: Boolean
         get() = sp.getBoolean(KEY_RAW, false)
@@ -58,6 +63,7 @@ class AppPrefs(context: Context) {
         const val KEY_ENHANCE = "mejora"
         const val KEY_ENHANCE_GEOMETRY = "mejora_geometria"
         const val KEY_RAW = "raw"
+        const val KEY_CRITIQUE = "critica"
     }
 }
 

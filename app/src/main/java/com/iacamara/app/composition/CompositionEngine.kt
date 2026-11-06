@@ -76,6 +76,10 @@ data class Guidance(
     val criteria: Map<String, Float>,
     /** Trazos de la guía elegida (coordenadas P): rejilla, espiral, eje, líneas guía... */
     val shapes: List<GuideShape> = emptyList(),
+    /** Tema del consejo (nivel, posición, cortes, horizonte…), para el coach y los hábitos. */
+    val messageKey: String? = null,
+    /** Gravedad del fallo del consejo (0 leve … 1 grave). */
+    val severity: Float = 0f,
 ) {
     val isGood: Boolean get() = score >= GOOD_SCORE
 
@@ -120,7 +124,7 @@ object CompositionEngine {
                     // roll > 0: el móvil está girado a la izquierda (antihorario); se corrige girando a la derecha.
                     val side = if (roll > 0) "derecha" else "izquierda"
                     val weight = if (input.steepView) 0.8f else 1.2f
-                    problems += Problem(c, weight, "Endereza el móvil: gíralo ${"%.0f".format(abs(roll))}° hacia la $side")
+                    problems += Problem(c, weight, "Endereza el móvil: gíralo ${"%.0f".format(abs(roll))}° hacia la $side", "nivel")
                 }
             }
         }
@@ -128,10 +132,10 @@ object CompositionEngine {
         // 2) Exposición y nitidez.
         val exposure = 1f - min(1f, input.highlightClip * 5f + input.shadowClip * 2f)
         criteria["exposición"] = exposure
-        if (input.highlightClip > 0.08f) problems += Problem(exposure, 0.8f, "Hay luces quemadas: toca la zona más clara para bajar la exposición")
+        if (input.highlightClip > 0.08f) problems += Problem(exposure, 0.8f, "Hay luces quemadas: toca la zona más clara para bajar la exposición", "exposición")
         val sharp = if (input.blurRisk) 0.4f else 1f
         criteria["nitidez"] = sharp
-        if (input.blurRisk) problems += Problem(sharp, 1.1f, "Mantén el móvil quieto para que la foto salga nítida")
+        if (input.blurRisk) problems += Problem(sharp, 1.1f, "Mantén el móvil quieto para que la foto salga nítida", "nitidez")
 
         // 3) Guía: la elegida por el usuario o la que mejor encaja con la escena.
         val box = input.subjectBox?.let { toViewRect(it, input) }
@@ -161,32 +165,32 @@ object CompositionEngine {
             criteria["posición"] = c
             if (distance > 0.07f) {
                 move = moveFor(placement.target.first - box.centerX, placement.target.second - box.centerY)
-                problems += Problem(c, 1.0f, placement.reason ?: move.text)
+                problems += Problem(c, 1.0f, placement.reason ?: move.text, "posición")
             }
             // Aire sobre la cabeza en retratos.
             if (input.subjectKind == SubjectKind.CARA || input.subjectKind == SubjectKind.PERSONA) {
                 val head = headroom(box, input.subjectKind)
                 criteria["aire"] = head.first
-                head.second?.let { problems += Problem(head.first, 0.9f, it) }
+                head.second?.let { problems += Problem(head.first, 0.9f, it, "aire") }
             }
             // Sujeto cortado por el borde.
             val cut = cutPenalty(box)
             criteria["sin cortes"] = 1f - cut
-            if (cut > 0.3f) problems += Problem(1f - cut, 1.0f, "Estás cortando al sujeto: aléjate un poco o haz zoom hacia fuera")
+            if (cut > 0.3f) problems += Problem(1f - cut, 1.0f, "Estás cortando al sujeto: aléjate un poco o haz zoom hacia fuera", "cortes")
             // Con los puntos del cuerpo: no cortar por las articulaciones (rodillas, tobillos, codos, manos).
             val people = input.subjectKind == SubjectKind.CARA || input.subjectKind == SubjectKind.PERSONA
             if (people && pose != null) {
                 jointCut(pose)?.let { (value, text) ->
                     criteria["sin cortes"] = min(criteria["sin cortes"] ?: 1f, value)
-                    problems += Problem(value, 1.05f, text)
+                    problems += Problem(value, 1.05f, text, "cortes")
                 }
                 if (input.scene == SceneType.RETRATO && input.faces.size <= 1 && armsAgainstBody(pose)) {
-                    problems += Problem(0.75f, 0.45f, "Pide que separe un poco los brazos del cuerpo: la figura queda más estilizada")
+                    problems += Problem(0.75f, 0.45f, "Pide que separe un poco los brazos del cuerpo: la figura queda más estilizada", "pose")
                 }
             }
             // Sujeto demasiado pequeño.
             if (input.subjectKind == SubjectKind.CARA && box.area < 0.006f) {
-                problems += Problem(0.5f, 0.7f, "Acércate: la cara ocupa muy poco en la foto")
+                problems += Problem(0.5f, 0.7f, "Acércate: la cara ocupa muy poco en la foto", "tamaño")
             }
         } else if (style == GuideStyle.ESPIRAL) {
             // Sin sujeto: el ojo de la espiral hacia donde está lo que más llama la atención.
@@ -211,7 +215,7 @@ object CompositionEngine {
                 criteria["simetría"] = c
                 if (abs(d) > 0.03f) {
                     val m = moveFor(d, 0f)
-                    problems += Problem(c, 1.1f, "Escena simétrica: lleva el eje al centro (${m.text.lowercase()})")
+                    problems += Problem(c, 1.1f, "Escena simétrica: lleva el eje al centro (${m.text.lowercase()})", "simetría")
                     if (box == null) {
                         subjectCenterView = ax to 0.5f
                         target = 0.5f to 0.5f
@@ -230,7 +234,7 @@ object CompositionEngine {
                 criteria["simetría"] = c
                 if (abs(d) > 0.03f) {
                     move = moveFor(0f, d)
-                    problems += Problem(c, 1.1f, "Reflejo: pon la línea del agua en el centro (${move.text.lowercase()})")
+                    problems += Problem(c, 1.1f, "Reflejo: pon la línea del agua en el centro (${move.text.lowercase()})", "simetría")
                 }
             }
         }
@@ -258,10 +262,10 @@ object CompositionEngine {
                 }
                 // Subir el horizonte en la imagen = inclinar hacia abajo, y al revés.
                 if (move == null) move = if (input.horizonY < horizonTarget) Move.ARRIBA else Move.ABAJO
-                problems += Problem(c, 0.9f, text)
+                problems += Problem(c, 0.9f, text, "horizonte")
             }
             if (style != GuideStyle.CENTRO && abs(input.horizonY - 0.5f) < 0.06f) {
-                problems += Problem(0.4f, 0.8f, "El horizonte corta la foto por la mitad: súbelo o bájalo a un tercio")
+                problems += Problem(0.4f, 0.8f, "El horizonte corta la foto por la mitad: súbelo o bájalo a un tercio", "horizonte.medio")
             }
         }
 
@@ -277,7 +281,7 @@ object CompositionEngine {
                 if (box != null) {
                     val leads = linesLeadTo(structure!!, box)
                     criteria["líneas"] = if (leads) 1f else 0.5f
-                    if (!leads) problems += Problem(0.5f, 0.6f, "Usa las líneas de la escena: colócate para que lleven la mirada al sujeto")
+                    if (!leads) problems += Problem(0.5f, 0.6f, "Usa las líneas de la escena: colócate para que lleven la mirada al sujeto", "líneas")
                 } else if (vp != null && vp.first in 0f..1f && vp.second in 0f..1f) {
                     val goal = vanishingTarget(vp, lines)
                     subjectCenterView = vp
@@ -289,7 +293,7 @@ object CompositionEngine {
                         val m = moveFor(goal.first - vp.first, goal.second - vp.second)
                         move = m
                         val where = if (goal.first == 0.5f) "al centro" else "a un punto fuerte"
-                        problems += Problem(c, 1.0f, "Lleva el punto donde se juntan las líneas $where: ${m.text.lowercase()}")
+                        problems += Problem(c, 1.0f, "Lleva el punto donde se juntan las líneas $where: ${m.text.lowercase()}", "líneas")
                     }
                 }
             }
@@ -304,7 +308,7 @@ object CompositionEngine {
                 if (edges.mass > 0.08f) {
                     val name = namedInBorder(edges.sideIndex, input, box)
                     val what = if (name != null) "«$name»" else "Algo"
-                    problems += Problem(c, 0.85f, "$what distrae en el borde ${edges.side}: encuadra para dejarlo fuera")
+                    problems += Problem(c, 0.85f, "$what distrae en el borde ${edges.side}: encuadra para dejarlo fuera", "bordes")
                 }
             }
         }
@@ -319,7 +323,7 @@ object CompositionEngine {
             criteria["equilibrio"] = c
             if (c < 0.6f) {
                 val side = if (centroid.first < 0.5f) "izquierda" else "derecha"
-                problems += Problem(c, 0.75f, "La foto pesa mucho a la $side: gira un poco hacia la $side para equilibrarla")
+                problems += Problem(c, 0.75f, "La foto pesa mucho a la $side: gira un poco hacia la $side para equilibrarla", "equilibrio")
             }
         }
 
@@ -329,7 +333,8 @@ object CompositionEngine {
 
         val score = weightedScore(criteria, input.scene, box != null)
         val worst = problems.minByOrNull { it.value / it.weight }
-        val message = if (score >= Guidance.GOOD_SCORE && (worst == null || worst.value > 0.6f)) null else worst?.text
+        val shown = if (score >= Guidance.GOOD_SCORE && (worst == null || worst.value > 0.6f)) null else worst
+        val message = shown?.text
 
         val horizonLine = horizonTargetView?.let { y -> toScreen(0f, y) to toScreen(1f, y) }
         return Guidance(
@@ -342,6 +347,8 @@ object CompositionEngine {
             style = style,
             criteria = criteria,
             shapes = shapes.map { s -> GuideShape(s.kind, s.points.map { toScreen(it.first, it.second) }) },
+            messageKey = shown?.key,
+            severity = shown?.let { (1f - it.value).coerceIn(0f, 1f) } ?: 0f,
         )
     }
 
@@ -663,7 +670,8 @@ object CompositionEngine {
 
     // ---------------------------------------------------------------- puntuación
 
-    private data class Problem(val value: Float, val weight: Float, val text: String)
+    /** Un fallo del encuadre: valor 0 (mal) … 1 (bien), su peso, el consejo y el tema (para los hábitos). */
+    private data class Problem(val value: Float, val weight: Float, val text: String, val key: String)
 
     private fun weightedScore(criteria: Map<String, Float>, scene: SceneType, hasSubject: Boolean): Int {
         val weights: Map<String, Float> = when {
