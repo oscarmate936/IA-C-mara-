@@ -364,7 +364,14 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
                     val s = create(m, backend)
                     try {
                         val out = m.runSample(s, sample) // la primera vez también compila
-                        check(job.check(reference, out)) { "resultado distinto del procesador normal" }
+                        if (backend == Backend.NPU_INT8) {
+                            // En 8 bits los resultados se desvían algo más en algunas imágenes (muy oscuras,
+                            // con detecciones justas): se exige que coincida en la mayoría de 3 imágenes.
+                            val passes = agreementOf(job, s, job.check(reference, out))
+                            check(passes >= 2) { "resultado distinto del procesador normal ($passes de 3 imágenes)" }
+                        } else {
+                            check(job.check(reference, out)) { "resultado distinto del procesador normal" }
+                        }
                         s to measure { m.runSample(s, sample) }
                     } catch (e: Throwable) {
                         s.close()
@@ -399,6 +406,22 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
             finish(Backend.CPU, cpuMs)
         }
         return false
+    }
+
+    /**
+     * Cuántas de hasta 3 imágenes reales dan el mismo resultado en `session` que en el procesador, contando
+     * la primera (`first`). Se para en cuanto la mayoría está decidida.
+     */
+    private fun agreementOf(job: Job, session: OrtSession, first: Boolean): Int {
+        var passes = if (first) 1 else 0
+        var tried = 1
+        while (tried < 3 && passes < 2 && passes + (3 - tried) >= 2 && !closed) {
+            job.sampleFrom.discardSample() // otra imagen distinta
+            val (sample, reference) = informativeSample(job) ?: break
+            if (job.check(reference, job.model.runSample(session, sample))) passes++
+            tried++
+        }
+        return passes
     }
 
     /** Una imagen real cuya salida en el procesador sirve para comparar, con esa salida. */

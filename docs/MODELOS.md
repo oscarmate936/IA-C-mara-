@@ -45,9 +45,12 @@ Notas:
   y, como el NPU del Snapdragon 6 Gen 4 rechaza cualquier Resize bilineal (se vio con el diagnóstico del Honor), cada
   ampliación ×2 bilineal de U²-Net se hace como vecino más próximo ×2 + relleno repitiendo el borde + filtro 3×3
   [¼ ½ ¼] por canal (exactamente lo mismo); las ×4…×32 de los mapas laterales, como varios ×2 seguidos (el mapa
-  final no cambia: coseno 1,00000 en coma flotante). Comprobación con imágenes que no se usaron para calibrar: U²-Net coincide en 38/38 (coseno ≥ 0,964),
-  YOLO11n en 20/20 y YOLO11s en 21/21. NIMA y YOLOE no pasan (el error se acumula capa a capa) y se quedan en el
-  procesador; CLIP tampoco tiene versión de 8 bits para el NPU.
+  final no cambia: coseno 1,00000 en coma flotante). Comprobación con imágenes que no se usaron para calibrar: U²-Net coincide en 38/38 (coseno ≥ 0,964), YOLO11n en 28/28 (calibrado y comprobado también con imágenes
+  de noche) y YOLO11s en 21/21. En el Honor, la saliencia pasa de 824 ms en el procesador a **47 ms en el NPU de 8 bits**.
+  Con muy poca luz los detectores de 8 bits pierden algunas detecciones flojas (con tan poca señal, 8 bits dan pocos
+  niveles): por eso la app compara la versión de 8 bits con el procesador en 3 imágenes y exige que coincida en 2; si
+  no, el detector sigue en el procesador. NIMA y YOLOE no pasan (el error se acumula capa a capa) y se quedan en el
+  procesador o la GPU; CLIP tampoco tiene versión de 8 bits para el NPU.
 - Las librerías de Qualcomm (`com.qualcomm.qti:qnn-runtime`) solo incluyen las de los chips Hexagon V69 (Snapdragon
   8 Gen 1), V73, V75 y V79; añaden ~53 MB al APK.
 

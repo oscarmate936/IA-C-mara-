@@ -48,16 +48,26 @@ def load_images(dirs):
     return [ImageOps.exif_transpose(Image.open(f)).convert("RGB") for f in files]
 
 
+def night(im, k, seed):
+    """La foto como de noche: oscura y con el ruido del sensor (el visor también se usa de noche)."""
+    rnd = np.random.default_rng(seed)
+    a = np.asarray(ImageEnhance.Brightness(im).enhance(k)).astype(np.float32)
+    a += rnd.normal(0, 3, a.shape)
+    return Image.fromarray(np.clip(a, 0, 255).astype(np.uint8))
+
+
 def augment(images):
-    """Recortes, giros y cambios de luz: más variedad para calibrar."""
+    """Recortes, giros y cambios de luz (también de noche): más variedad para calibrar y comprobar."""
     out = []
-    for im in images:
+    for i, im in enumerate(images):
         w, h = im.size
         out.append(im)
         out.append(ImageOps.mirror(im))
         out.append(im.crop((w // 6, h // 6, w - w // 6, h - h // 6)))
         out.append(ImageEnhance.Brightness(im).enhance(0.45))
         out.append(ImageEnhance.Brightness(im).enhance(1.4))
+        out.append(night(im, 0.3, i))
+        out.append(night(ImageOps.mirror(im), 0.15, i + 1000))
     return out
 
 
