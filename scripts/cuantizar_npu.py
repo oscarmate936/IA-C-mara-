@@ -335,6 +335,60 @@ def npu_friendly(model):
     return model, left
 
 
+def replace_bilinear(model):
+    """Cambia cada Resize bilineal por operaciones que el NPU de gama media sí acepta.
+
+    En el Snapdragon 6 Gen 4 el NPU rechaza el Resize bilineal (tanto el genérico como ResizeBilinear), pero
+    acepta el de vecino más próximo y las convoluciones por canal. Una ampliación ×2 bilineal ('half_pixel')
+    es exactamente: vecino más próximo ×2 → rellenar 1 píxel repitiendo el borde → filtro 3×3 [¼ ½ ¼]⊗[¼ ½ ¼]
+    por canal. Las ampliaciones ×4…×32 (los mapas laterales de U²-Net, de un canal) se hacen como varios ×2
+    seguidos: casi lo mismo que un solo paso (se comprueba el resultado final).
+    @return el modelo y cuántos Resize se cambiaron.
+    """
+    from onnx import helper, numpy_helper, shape_inference
+
+    g = model.graph
+    shapes = {v.name: [d.dim_value for d in v.type.tensor_type.shape.dim]
+              for v in list(shape_inference.infer_shapes(model).graph.value_info) + list(g.input) + list(g.output)}
+    kernel1d = np.array([0.25, 0.5, 0.25], dtype=np.float32)
+    kernel = np.outer(kernel1d, kernel1d)
+    g.initializer.append(numpy_helper.from_array(np.array([1, 1, 2, 2], dtype=np.float32), "x2_escalas"))
+    g.initializer.append(numpy_helper.from_array(np.array([0, 0, 1, 1, 0, 0, 1, 1], dtype=np.int64), "x2_relleno"))
+    new_nodes = []
+    changed = 0
+    for n in g.node:
+        attrs = {a.name: a for a in n.attribute}
+        mode = attrs["mode"].s.decode() if "mode" in attrs else "nearest"
+        src = shapes.get(n.input[0], [])
+        dst = shapes.get(n.output[0], [])
+        if n.op_type != "Resize" or mode != "linear" or len(src) != 4 or len(dst) != 4:
+            new_nodes.append(n)
+            continue
+        factor = dst[2] // max(1, src[2])
+        steps = int(round(np.log2(max(1, factor))))
+        if (src[2] << steps, src[3] << steps) != (dst[2], dst[3]) or steps < 1:
+            new_nodes.append(n)
+            continue
+        channels = src[1]
+        wname = f"{n.name}_suave"
+        g.initializer.append(numpy_helper.from_array(np.tile(kernel, (channels, 1, 1, 1)).reshape(channels, 1, 3, 3), wname))
+        x = n.input[0]
+        for k in range(steps):
+            last = k == steps - 1
+            up, pad = f"{n.name}_x2_{k}", f"{n.name}_borde_{k}"
+            out = n.output[0] if last else f"{n.name}_paso_{k}"
+            new_nodes.append(helper.make_node("Resize", [x, "", "x2_escalas"], [up], name=up, mode="nearest",
+                                              coordinate_transformation_mode="asymmetric", nearest_mode="floor"))
+            new_nodes.append(helper.make_node("Pad", [up, "x2_relleno"], [pad], name=pad, mode="edge"))
+            new_nodes.append(helper.make_node("Conv", [pad, wname], [out], name=f"{n.name}_filtro_{k}",
+                                              group=channels, kernel_shape=[3, 3], pads=[0, 0, 0, 0]))
+            x = out
+        changed += 1
+    del g.node[:]
+    g.node.extend(new_nodes)
+    return model, changed
+
+
 def fold_shapes(src, dst):
     """Calcula de antemano las operaciones de forma (Shape, Gather…): la entrada tiene tamaño fijo."""
     so = ort.SessionOptions()
@@ -444,13 +498,16 @@ def main():
         name = ref.get_inputs()[0].name
         calib = [prep(im) for im in calib_imgs]
         model, moved = remove_constant_channels(onnx.load(str(up)), name, calib)
+        # Después de lo anterior (el filtro nuevo cortaría la cadena que detecta los canales constantes).
+        model, resized = replace_bilinear(model)
         onnx.save(model, str(up))
         if not qnn_preprocess_model(str(up), str(pre)):
             shutil.copy(up, pre)
         up.unlink(missing_ok=True)
         eq = ort.InferenceSession(str(pre), providers=["CPUExecutionProvider"])
         same = min(cosine(ref.run(None, {name: x})[0], eq.run(None, {name: x})[0]) for x in calib[:4])
-        print(f"{key}: {moved} canales constantes pasados al sesgo (coseno en coma flotante {same:.5f})", flush=True)
+        print(f"{key}: {moved} canales constantes pasados al sesgo, {resized} Resize bilineales cambiados "
+              f"(coseno en coma flotante {same:.5f})", flush=True)
         tail = float_tail(onnx.load(str(pre)))
         cfg = get_qnn_qdq_config(
             str(pre), Reader(name, calib),

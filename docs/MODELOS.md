@@ -16,7 +16,7 @@ y `scripts/export_ia_avanzada.py` (CLIP, NIMA, YOLO11s y pose); las versiones de
 | `yolo11s.onnx` (38 MB) | ONNX Runtime | Detector más preciso (47,0 frente a 39,5 de precisión COCO). Solo se usa si el móvil lo ejecuta en el NPU o la GPU en ≤ 40 ms y da los mismos resultados que en el procesador | ~5/s | AGPL-3.0 (uso personal) |
 | `yoloe_vocab.onnx` (39 MB) + `yoloe_labels.tsv` | ONNX Runtime | **Opción 3.** Detector de vocabulario abierto (YOLOE-11s) con ~120 cosas habituales en fotos (estructura metálica, pila de troncos, volcán, farola…). Da nombre a lo que YOLO11 no conoce, anula sus confusiones y nombra lo que distrae en los bordes | ~1/s | AGPL-3.0 (uso personal) |
 | `u2netp.onnx` (4,6 MB) | ONNX Runtime | **Opción 1.** Saliencia (U²-Net pequeño): encuentra "lo importante" de la imagen aunque no tenga nombre y mide lo que distrae en los bordes | ~1–2/s | Apache 2.0 |
-| `u2netp_int8.onnx` (3,4 MB), `yolo11n_int8.onnx` (3,3 MB), `yolo11s_int8.onnx` (10,2 MB) | ONNX Runtime (QNN) | Los mismos modelos en enteros de 8 bits, **solo para el NPU** de los Snapdragon que no admiten coma flotante (el Snapdragon 6 Gen 4 del Honor). Solo se prueban si el NPU normal falla | — | Las del original |
+| `u2netp_int8.onnx` (3,5 MB), `yolo11n_int8.onnx` (3,3 MB), `yolo11s_int8.onnx` (10,2 MB) | ONNX Runtime (QNN) | Los mismos modelos en enteros de 8 bits, **solo para el NPU** de los Snapdragon que no admiten coma flotante (el Snapdragon 6 Gen 4 del Honor). Solo se prueban si el NPU normal falla | — | Las del original |
 
 Notas:
 
@@ -42,8 +42,10 @@ Notas:
   (Conv, Resize, Pool…): ONNX Runtime deja que el NPU las acepte en una primera pasada y solo las valida de verdad
   después; si el chip las rechaza entonces, la sesión entera falla (el error «… inserted using the NHWC format … but
   was not selected by that EP» del Honor). Por eso la convolución final de YOLO (DFL) se convierte en Mul + ReduceSum
-  y los Resize de U²-Net usan `half_pixel` (en el NPU, ResizeBilinear) en vez de `pytorch_half_pixel` (Resize
-  genérico): mismo resultado. Comprobación con imágenes que no se usaron para calibrar: U²-Net coincide en 38/38 (coseno ≥ 0,979),
+  y, como el NPU del Snapdragon 6 Gen 4 rechaza cualquier Resize bilineal (se vio con el diagnóstico del Honor), cada
+  ampliación ×2 bilineal de U²-Net se hace como vecino más próximo ×2 + relleno repitiendo el borde + filtro 3×3
+  [¼ ½ ¼] por canal (exactamente lo mismo); las ×4…×32 de los mapas laterales, como varios ×2 seguidos (el mapa
+  final no cambia: coseno 1,00000 en coma flotante). Comprobación con imágenes que no se usaron para calibrar: U²-Net coincide en 38/38 (coseno ≥ 0,964),
   YOLO11n en 20/20 y YOLO11s en 21/21. NIMA y YOLOE no pasan (el error se acumula capa a capa) y se quedan en el
   procesador; CLIP tampoco tiene versión de 8 bits para el NPU.
 - Las librerías de Qualcomm (`com.qualcomm.qti:qnn-runtime`) solo incluyen las de los chips Hexagon V69 (Snapdragon
