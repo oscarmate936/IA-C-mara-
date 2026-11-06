@@ -156,9 +156,10 @@ class AcceleratorStore private constructor(context: Context) {
         @Volatile private var instance: AcceleratorStore? = null
 
         private val MODELS = listOf(
+            "yunet" to "Caras (YuNet)",
             "u2netp" to "Saliencia (U²-Net)",
             "yoloe" to "YOLOE",
-            "yolo11n" to "YOLO11n",
+            "yolo26n" to "YOLO26n",
             "yolo11s" to "YOLO11s",
             "nima" to "Estética (NIMA)",
             "clip" to "Escena (CLIP)",

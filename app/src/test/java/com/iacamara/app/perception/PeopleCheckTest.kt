@@ -55,8 +55,38 @@ class PeopleCheckTest {
         val landmarks = NRect(0.41f, 0.29f, 0.51f, 0.43f)
         assertEquals(1, PeopleCheck.faces(listOf(weak), listOf(landmarks), lowLight = true).size)
         // Una cara muy clara cuenta sola de día, pero de noche hace falta más.
-        val strong = PeopleCheck.RawFace(box, 0.8f)
+        val strong = PeopleCheck.RawFace(box, 0.78f)
         assertEquals(1, PeopleCheck.faces(listOf(strong), emptyList(), lowLight = false).size)
         assertTrue(PeopleCheck.faces(listOf(strong), emptyList(), lowLight = true).isEmpty())
+        assertEquals(1, PeopleCheck.faces(listOf(strong.copy(score = 0.86f)), emptyList(), lowLight = true).size)
+    }
+
+    @Test
+    fun enUnGrupoCadaCaraEstaEnSuPersona() {
+        // Caras pequeñas (los 478 puntos no las ven) con confianza media, cada una en la cabeza de una persona.
+        val person = DetectedObject("person", NRect(0.40f, 0.30f, 0.46f, 0.70f), 0.8f)
+        val face = PeopleCheck.RawFace(NRect(0.420f, 0.31f, 0.440f, 0.335f), 0.6f)
+        assertEquals(1, PeopleCheck.faces(listOf(face), emptyList(), lowLight = false, objects = listOf(person)).size)
+        // A la altura de las rodillas no es su cara.
+        val knee = face.copy(box = NRect(0.420f, 0.60f, 0.440f, 0.625f))
+        assertTrue(PeopleCheck.faces(listOf(knee), emptyList(), lowLight = false, objects = listOf(person)).isEmpty())
+        // Una persona dudosa no confirma caras (son las caras las que la confirman a ella).
+        val unsure = person.copy(score = 0.4f)
+        assertTrue(PeopleCheck.faces(listOf(face), emptyList(), lowLight = false, objects = listOf(unsure)).isEmpty())
+        // De noche hace falta algo más.
+        assertTrue(PeopleCheck.faces(listOf(face), emptyList(), lowLight = true, objects = listOf(person)).isEmpty())
+    }
+
+    @Test
+    fun laCaraDeUnPerroNoEsUnaCara() {
+        val dog = DetectedObject("dog", NRect(0.1f, 0.5f, 0.4f, 0.95f), 0.7f)
+        val dogFace = PeopleCheck.RawFace(NRect(0.2f, 0.55f, 0.28f, 0.63f), 0.76f)
+        assertTrue(PeopleCheck.faces(listOf(dogFace), emptyList(), lowLight = false, objects = listOf(dog)).isEmpty())
+        // Sin el perro detectado, una cara así de clara sí cuenta.
+        assertEquals(1, PeopleCheck.faces(listOf(dogFace), emptyList(), lowLight = false).size)
+        // Una persona con el perro en brazos: su cara está en la persona y cuenta.
+        val owner = DetectedObject("person", NRect(0.12f, 0.45f, 0.38f, 1f), 0.85f)
+        val ownerFace = PeopleCheck.RawFace(NRect(0.2f, 0.47f, 0.28f, 0.55f), 0.8f)
+        assertEquals(1, PeopleCheck.faces(listOf(ownerFace), emptyList(), lowLight = false, objects = listOf(dog, owner)).size)
     }
 }

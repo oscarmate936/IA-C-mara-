@@ -2,21 +2,21 @@
 
 Todos funcionan dentro del móvil, sin internet, desde `app/src/main/assets/models/` (~170 MB).
 Los modelos ONNX se regeneran con `scripts/export_models.py` (vocabulario en `scripts/yoloe_vocabulary.tsv`)
-y `scripts/export_ia_avanzada.py` (CLIP, NIMA, YOLO11s y pose); las versiones de 8 bits para el NPU, con
-`scripts/cuantizar_npu.py`.
+(YOLO26n, YuNet, YOLOE, U²-Net, ojos) y `scripts/export_ia_avanzada.py` (CLIP, NIMA, YOLO11s y pose); las
+versiones de 8 bits para el NPU, con `scripts/cuantizar_npu.py`.
 
 | Archivo | Motor | Para qué sirve | Frecuencia | Licencia |
 |---|---|---|---|---|
-| `blaze_face_short_range.tflite` (0,2 MB) | MediaPipe | Detectar caras | Cada fotograma | Apache 2.0 |
+| `yunet.onnx` (0,2 MB) | ONNX Runtime | **Caras (YuNet, OpenCV Zoo)**, entrada 640 px: ve caras de ~10 píxeles (las de una foto de grupo), de perfil y con poca luz. Sustituye a BlazeFace (que solo veía caras cercanas: 0 caras en las fotos de grupo frente a 13–14 de YuNet). Las cajas salen con el convenio de BlazeFace para que sigan valiendo todos los umbrales | Casi cada fotograma | MIT |
 | `face_landmarker.task` (3,8 MB) | MediaPipe | 478 puntos de la cara: ojos abiertos/cerrados (disparo inteligente) y hacia dónde mira (espacio de mirada) | ~4/s si hay caras | Apache 2.0 |
-| `pose_landmarker_lite.task` (5,8 MB) | MediaPipe | 33 puntos del cuerpo: no cortar por rodillas, tobillos, codos o manos; ojos exactamente en la línea de la guía; brazos pegados al cuerpo | ~4/s si hay personas | Apache 2.0 |
+| `pose_landmarker_full.task` (9,4 MB) | MediaPipe | 33 puntos del cuerpo (versión *full*, más precisa que la *lite* con poses difíciles): no cortar por rodillas, tobillos, codos o manos; ojos exactamente en la línea de la guía; brazos pegados al cuerpo | ~4/s si hay personas | Apache 2.0 |
 | `clip_image.onnx` (45 MB, int8) + `clip_scenes.bin/.tsv` | ONNX Runtime | **CLIP pequeño (TinyCLIP ViT-40M/32, LAION-400M).** Compara la imagen con descripciones de 14 tipos de escena (atardecer, playa, comida, arquitectura…) para reconocer la escena; también confirma si hay animales. Sustituye a EfficientNet (que reconocía objetos, no escenas) | ~2/s | MIT |
 | `nima_aesthetic.onnx` (12,9 MB) | ONNX Runtime | **NIMA estética** (MobileNet, pesos de idealo): nota 1–10 aprendida de ~250.000 fotos puntuadas por personas. Suma en la puntuación del encuadre y desempata la mejor foto de la ráfaga | ~1/s | Apache 2.0 |
-| `yolo11n.onnx` (10,7 MB) | ONNX Runtime | **Opción 2.** Detector rápido de 80 objetos (personas, animales, comida…), entrada 512 px, NMS incluido | ~5/s | AGPL-3.0 (uso personal) |
+| `yolo26n.onnx` (9,9 MB) + `coco_labels.txt` | ONNX Runtime | **Opción 2.** Detector rápido de 80 objetos (personas, animales, comida…), entrada 512 px. YOLO26n (2026, sucesor de YOLO11n: 40,9 frente a 39,5 de precisión COCO). Se exporta sin NMS (la red sola, que va mejor en el NPU) y la selección de detecciones la hace la app (`YoloPost.kt`, idéntica a la de Ultralytics: comprobado con 69 detecciones en 15 fotos). Sus puntuaciones se pasan a la escala de YOLO11 (personas +0,04, otros objetos −0,05; medido con 346 personas emparejadas) para que valgan todos los umbrales | ~5/s | AGPL-3.0 (uso personal) |
 | `yolo11s.onnx` (38 MB) | ONNX Runtime | Detector más preciso (47,0 frente a 39,5 de precisión COCO). Solo se usa si el móvil lo ejecuta en el NPU o la GPU en ≤ 40 ms y da los mismos resultados que en el procesador | ~5/s | AGPL-3.0 (uso personal) |
-| `yoloe_vocab.onnx` (39 MB) + `yoloe_labels.tsv` | ONNX Runtime | **Opción 3.** Detector de vocabulario abierto (YOLOE-11s) con ~120 cosas habituales en fotos (estructura metálica, pila de troncos, volcán, farola…). Da nombre a lo que YOLO11 no conoce, anula sus confusiones y nombra lo que distrae en los bordes | ~1/s | AGPL-3.0 (uso personal) |
+| `yoloe_vocab.onnx` (39 MB) + `yoloe_labels.tsv` | ONNX Runtime | **Opción 3.** Detector de vocabulario abierto (YOLOE-11s) con ~120 cosas habituales en fotos (estructura metálica, pila de troncos, volcán, farola…). Da nombre a lo que el detector no conoce, anula sus confusiones y nombra lo que distrae en los bordes | ~1/s | AGPL-3.0 (uso personal) |
 | `u2netp.onnx` (4,6 MB) | ONNX Runtime | **Opción 1.** Saliencia (U²-Net pequeño): encuentra "lo importante" de la imagen aunque no tenga nombre y mide lo que distrae en los bordes | ~1–2/s | Apache 2.0 |
-| `u2netp_int8.onnx` (3,5 MB), `yolo11n_int8.onnx` (3,3 MB), `yolo11s_int8.onnx` (10,2 MB) | ONNX Runtime (QNN) | Los mismos modelos en enteros de 8 bits, **solo para el NPU** de los Snapdragon que no admiten coma flotante (el Snapdragon 6 Gen 4 del Honor). Solo se prueban si el NPU normal falla | — | Las del original |
+| `u2netp_int8.onnx` (3,5 MB), `yolo26n_int8.onnx` (3,1 MB), `yolo11s_int8.onnx` (10,2 MB), `yunet_int8.onnx` (0,2 MB) | ONNX Runtime (QNN) | Los mismos modelos en enteros de 8 bits, **solo para el NPU** de los Snapdragon que no admiten coma flotante (el Snapdragon 6 Gen 4 del Honor). Solo se prueban si el NPU normal falla | — | Las del original |
 
 Notas:
 
@@ -34,12 +34,13 @@ Notas:
   Si un acelerador no coincide, el diagnóstico dice en qué difiere (para los detectores: qué ve el procesador y qué
   ve el acelerador, clase:puntuación e IoU; para los mapas, el coseno). CLIP no se prueba en el NPU: en coma flotante
   de 16 bits algún valor intermedio se desborda y sale NaN (comprobado simulándolo); en el procesador tarda ~25–40 ms.
-  YOLO11n y YOLOE simulados en 16 bits sí coinciden con el procesador (8/8 y 7/7). Se prueban primero los modelos más lentos.
+  YOLO26n, YOLOE y YuNet simulados en 16 bits sí coinciden con el procesador (8/8, 7/7 y 86/86). Se prueban primero los
+  modelos más lentos.
   El panel 📊 muestra dónde corre cada modelo (NPU, GPU o CPU), cuánto tarda y qué se está probando; el informe de
   Diagnóstico (ⓘ → Copiar) incluye la sección «ACELERACIÓN» con los tiempos medidos y el motivo de cada descarte.
 - **NPU de 8 bits (Honor y otros gama media).** El NPU del Snapdragon 6 Gen 4 (SM6650) no admite coma flotante
   («The SocModel doesn't support FP16»): los modelos normales fallan al compilarse para él. Para esos chips van copias
-  cuantizadas a 8 bits (QDQ, pesos por canal, calibradas con fotos reales) de U²-Net, YOLO11n y YOLO11s. La app
+  cuantizadas a 8 bits (QDQ, pesos por canal, calibradas con fotos reales) de U²-Net, YOLO26n, YOLO11s y YuNet. La app
   las prueba **solo si el NPU normal falla** y con la misma comprobación que el resto (mismo resultado que el
   procesador con una imagen real; la saliencia, solo con imágenes en las que algo destaca). En el diagnóstico salen
   como «NPU 8 bits». Para que U²-Net funcione en 8 bits, `cuantizar_npu.py` pasa al sesgo dos canales que valen ~226
@@ -51,8 +52,8 @@ Notas:
   y, como el NPU del Snapdragon 6 Gen 4 rechaza cualquier Resize bilineal (se vio con el diagnóstico del Honor), cada
   ampliación ×2 bilineal de U²-Net se hace como vecino más próximo ×2 + relleno repitiendo el borde + filtro 3×3
   [¼ ½ ¼] por canal (exactamente lo mismo); las ×4…×32 de los mapas laterales, como varios ×2 seguidos (el mapa
-  final no cambia: coseno 1,00000 en coma flotante). Comprobación con imágenes que no se usaron para calibrar: U²-Net coincide en 38/38 (coseno ≥ 0,964), YOLO11n en 28/28 (calibrado y comprobado también con imágenes
-  de noche) y YOLO11s en 21/21. En el Honor, la saliencia pasa de 824 ms en el procesador a **47 ms en el NPU de 8 bits**.
+  final no cambia: coseno 1,00000 en coma flotante). Comprobación con imágenes que no se usaron para calibrar: U²-Net coincide en 38/38 (coseno ≥ 0,964), YOLO26n en 28/28 (calibrado y comprobado también con imágenes
+  de noche), YOLO11s en 21/21 y YuNet en 54/55. En el Honor, la saliencia pasa de 824 ms en el procesador a **47 ms en el NPU de 8 bits**.
   Con muy poca luz los detectores de 8 bits pierden algunas detecciones flojas (con tan poca señal, 8 bits dan pocos
   niveles): por eso la app compara la versión de 8 bits con el procesador en 3 imágenes y exige que coincida en 2; si
   no, el detector sigue en el procesador. NIMA y YOLOE no pasan (el error se acumula capa a capa) y se quedan en el
@@ -63,13 +64,23 @@ Notas:
 - **YOLOE** es el sucesor de YOLO-World del mismo equipo (Ultralytics): detecta cualquier cosa a partir de una lista de
   nombres. Se eligió porque el codificador de texto de YOLO-World no se pudo descargar en el entorno de compilación.
   El vocabulario se "hornea" en el modelo al exportarlo: para añadir cosas nuevas se edita la lista y se reexporta.
-- EfficientDet-Lite0/Lite2 se retiraron: YOLO11n es más preciso y además hay dos comprobaciones extra
+- **Caras: comprobación cruzada.** Una cara de YuNet cuenta si es clara (≥ 0,75 de día, ≥ 0,8 con poca luz), si la
+  confirman los 478 puntos de la cara o si está en la cabeza de una persona clara del detector de objetos (≥ 0,55 de
+  día, ≥ 0,65 de noche: en un grupo, las caras pequeñas no las ven los 478 puntos, pero cada una está en su persona).
+  La "cara" de un perro (YuNet le da hasta 0,74) no cuenta si está dentro de un animal y de ninguna persona.
+  Umbrales medidos con las fotos del usuario, de día y oscurecidas con ruido como de noche.
+- **MobileCLIP2** (sustituto previsto de TinyCLIP) no se incluyó: sus pesos solo se publican en Hugging Face y en el
+  servidor de Apple, y la red del entorno de compilación no llega a ellos. TinyCLIP sigue haciendo ese trabajo.
+- **YOLO26s** (sustituto previsto de YOLO11s) tampoco: exportarlo exige abrir el archivo de pesos de PyTorch
+  descargado, y el entorno de compilación no lo permite por seguridad. YOLO11s sigue siendo el detector grande.
+- EfficientDet-Lite0/Lite2 se retiraron: YOLO26n es más preciso y además hay dos comprobaciones extra
   (vocabulario abierto y CLIP) contra confusiones como la "jirafa" de hierro.
 - EfficientNet-Lite0 (clasificador ImageNet) se retiró: CLIP reconoce escenas, no solo objetos.
 - Cada modelo se espacia solo según lo que tarda en cada móvil (`TaskClock`) y si el móvil se calienta;
   en cada fotograma se ejecuta como mucho un modelo pesado. El panel 📊 muestra los milisegundos de cada uno.
 
-Orígenes: modelos de MediaPipe en `storage.googleapis.com/mediapipe-models`, pesos de YOLO11n, YOLO11s y YOLOE-11s
-de `github.com/ultralytics/assets` (v8.3.0), U²-Net pequeño de `github.com/danielgatis/rembg` (v0.0.0), TinyCLIP de
+Orígenes: modelos de MediaPipe en `storage.googleapis.com/mediapipe-models`, pesos de YOLO11s y YOLOE-11s
+de `github.com/ultralytics/assets` (v8.3.0) y de YOLO26n (v8.4.0), YuNet (2023mar) de `github.com/opencv/opencv_zoo`
+(su decodificación en la app da lo mismo que `cv2.FaceDetectorYN`), U²-Net pequeño de `github.com/danielgatis/rembg` (v0.0.0), TinyCLIP de
 `github.com/wkcn/TinyCLIP-model-zoo` (Microsoft, MIT) y NIMA de `github.com/idealo/image-quality-assessment`
 (Apache 2.0; la conversión a ONNX se comprobó contra el modelo original de Keras: misma salida).

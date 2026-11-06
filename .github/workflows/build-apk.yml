@@ -73,12 +73,12 @@ jobs:
             echo "::error::R8 ha renombrado ONNX Runtime: YOLO y U²-Net no podrán cargarse."
             exit 1
           fi
-          for m in blaze_face_short_range.tflite face_landmarker.task pose_landmarker_lite.task \
-                   yolo11n.onnx yolo11s.onnx yoloe_vocab.onnx u2netp.onnx clip_image.onnx nima_aesthetic.onnx \
-                   u2netp_int8.onnx yolo11n_int8.onnx yolo11s_int8.onnx; do
+          for m in face_landmarker.task pose_landmarker_full.task yunet.onnx \
+                   yolo26n.onnx yolo11s.onnx yoloe_vocab.onnx u2netp.onnx clip_image.onnx nima_aesthetic.onnx \
+                   u2netp_int8.onnx yolo26n_int8.onnx yolo11s_int8.onnx yunet_int8.onnx; do
             unzip -v out/IA-Camara.apk "assets/models/$m" | grep -q " Stored " || { echo "::error::El modelo $m falta o está comprimido"; exit 1; }
           done
-          for f in yolo11n_labels.txt yoloe_labels.tsv clip_scenes.bin clip_scenes.tsv; do
+          for f in coco_labels.txt yoloe_labels.tsv clip_scenes.bin clip_scenes.tsv; do
             unzip -l out/IA-Camara.apk "assets/models/$f" | grep -q "$f" || { echo "::error::Falta $f"; exit 1; }
           done
           echo "Modelos presentes y sin comprimir."

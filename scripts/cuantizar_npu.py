@@ -18,7 +18,7 @@ saliencia, misma nota de estética) con los mismos criterios que la app (OutputC
 10 % de las imágenes, no se guarda. NIMA no pasa (el error se acumula capa a capa en MobileNet) y se queda
 sin versión INT8: es ligera y en el procesador va bien.
 
-Uso: python cuantizar_npu.py [--solo=u2netp,yolo11n] <carpeta_assets_models> <carpeta_salida> <carpeta_imágenes>...
+Uso: python cuantizar_npu.py [--solo=u2netp,yolo26n] <carpeta_assets_models> <carpeta_salida> <carpeta_imágenes>...
      python cuantizar_npu.py --ajustar <modelo_int8.onnx>...   (solo los ajustes para el NPU)
 Los *_int8.onnx de la carpeta de salida se copian a app/src/main/assets/models/.
 """
@@ -91,12 +91,22 @@ def nima_input(im):
     return a.transpose(2, 0, 1)[None].astype(np.float32)
 
 
+def yunet_input(im, size=640):
+    """Como la app: pegada arriba a la izquierda, relleno negro, BGR de 0 a 255 (sin normalizar)."""
+    s = size / max(im.width, im.height)
+    canvas = Image.new("RGB", (size, size), (0, 0, 0))
+    canvas.paste(im.resize((round(im.width * s), round(im.height * s)), Image.BILINEAR), (0, 0))
+    a = np.asarray(canvas).astype(np.float32)[:, :, ::-1]
+    return a.transpose(2, 0, 1)[None].copy()
+
+
 MODELS = {
     "u2netp": ("u2netp.onnx", u2net_input),
-    "yolo11n": ("yolo11n.onnx", lambda im: letterbox(im, 512)),
+    "yolo26n": ("yolo26n.onnx", lambda im: letterbox(im, 512)),
     "yolo11s": ("yolo11s.onnx", lambda im: letterbox(im, 512)),
     "yoloe": ("yoloe_vocab.onnx", lambda im: letterbox(im, 480)),
     "nima": ("nima_aesthetic.onnx", nima_input),
+    "yunet": ("yunet.onnx", yunet_input),
 }
 
 
@@ -432,7 +442,52 @@ def iou(a, b):
     return inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter)
 
 
+def yolo_rows(out, conf=0.25, iou_max=0.7, max_det=300):
+    """Como YoloPost en la app: un YOLO sin NMS ([1, 4 + clases, N]: cx, cy, w, h y la puntuación de cada
+    clase) pasa a filas x1, y1, x2, y2, puntuación, clase; uno con NMS ([1, n, 6]) se deja igual."""
+    if out.ndim != 3 or not (5 <= out.shape[1] < out.shape[2] and out.shape[2] > max_det):
+        return out
+    p = out[0]
+    cls = p[4:].argmax(0)
+    best = p[4:].max(0)
+    keep = np.where(best >= conf)[0]
+    keep = keep[np.argsort(-best[keep], kind="stable")]
+    rows = []
+    for i in keep:
+        cx, cy, w, h = p[:4, i]
+        b = [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, float(best[i]), float(cls[i])]
+        if not any(int(k[5]) == int(b[5]) and iou(k, b) > iou_max for k in rows):
+            rows.append(b)
+        if len(rows) >= max_det:
+            break
+    return np.array(rows, dtype=np.float32).reshape(1, -1, 6)
+
+
+def yunet_rows(out, size=640, conf=0.5, iou_max=0.3):
+    """Como YuNetDetector en la app: [1, N, 16] (cls, obj, caja, 5 puntos) → filas x1, y1, x2, y2, puntuación, 0."""
+    p = out[0]
+    rows, start = [], 0
+    for stride in (8, 16, 32):
+        cols = size // stride
+        n = cols * cols
+        q = p[start:start + n]
+        score = np.sqrt(np.clip(q[:, 0], 0, 1) * np.clip(q[:, 1], 0, 1))
+        for i in np.where(score >= conf)[0]:
+            r, c = divmod(int(i), cols)
+            cx, cy = (c + q[i, 2]) * stride, (r + q[i, 3]) * stride
+            w, h = np.exp(q[i, 4]) * stride, np.exp(q[i, 5]) * stride
+            rows.append([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, float(score[i]), 0.0])
+        start += n
+    rows.sort(key=lambda r: -r[4])
+    kept = []
+    for r in rows:
+        if all(iou(k, r) <= iou_max for k in kept):
+            kept.append(r)
+    return np.array(kept, dtype=np.float32).reshape(1, -1, 6)
+
+
 def same_detections(ref, out, min_score=0.3):
+    ref, out = yolo_rows(ref), yolo_rows(out)
     r = [x for x in ref[0] if x[4] >= min_score]
     o = out[0]
     strong = sum(1 for x in o if x[4] >= min_score + 0.15)
@@ -454,7 +509,11 @@ def check(key, ref_sess, q_sess, inputs):
     for x in inputs:
         r = ref_sess.run(None, {name: x})[0]
         q = q_sess.run(None, {name: x})[0]
-        if key.startswith("yolo"):
+        if key == "yunet":
+            res = same_detections(yunet_rows(r), yunet_rows(q), 0.6)
+            if res is None:
+                continue
+        elif key.startswith("yolo"):
             res = same_detections(r, q)
             if res is None:
                 continue

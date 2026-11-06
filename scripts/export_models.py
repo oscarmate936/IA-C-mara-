@@ -1,13 +1,15 @@
 """Prepara los modelos ONNX de IA Cámara (se ejecuta en un ordenador, no en el móvil).
 
-- YOLO11n (detector rápido, 80 clases COCO) → yolo11n.onnx con NMS incluido.
+- YOLO26n (detector rápido, 80 clases COCO) → yolo26n.onnx sin NMS (salida [1, 84, 5376]; la selección de
+  detecciones la hace la app, YoloPost.kt) y coco_labels.txt.
+- YuNet (caras, OpenCV Zoo, MIT) → yunet.onnx a 640×640 con una sola salida [1, 8400, 16].
 - YOLOE-11s (vocabulario abierto) con el vocabulario de yoloe_vocabulary.tsv ya integrado
   → yoloe_vocab.onnx con NMS incluido, más yoloe_labels.tsv con los nombres en español.
 - U²-Net pequeño (saliencia: "qué llama la atención") → u2netp.onnx (descargado de rembg).
 - Face Landmarker de MediaPipe (ojos abiertos y mirada) → face_landmarker.task.
 
 Uso: python export_models.py <carpeta_de_trabajo> <carpeta_assets_models>
-Licencias: YOLO11 y YOLOE son AGPL-3.0 (permitido en uso personal); U²-Net Apache 2.0.
+Licencias: YOLO26 y YOLOE son AGPL-3.0 (permitido en uso personal); U²-Net Apache 2.0; YuNet MIT.
 """
 
 import shutil
@@ -15,10 +17,16 @@ import sys
 import urllib.request
 from pathlib import Path
 
+import onnx
 import onnx.utils
 from ultralytics import YOLO, YOLOE
 
 ASSETS = "https://github.com/ultralytics/assets/releases/download/v8.3.0"
+YOLO26N = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n.pt"
+YUNET = (
+    "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/"
+    "face_detection_yunet_2023mar.onnx"
+)
 U2NETP = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
 FACE_LANDMARKER = (
     "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
@@ -29,6 +37,29 @@ def download(url: str, dest: Path) -> Path:
     if not dest.exists():
         urllib.request.urlretrieve(url, dest)
     return dest
+
+
+def export_yunet(src: Path, dst: Path, size: int = 640) -> None:
+    """[1, N, 16] por posición: cls, obj, caja (4) y 5 puntos (10); primero paso 8, luego 16 y 32."""
+    from onnx import TensorProto, helper
+
+    m = onnx.load(str(src))
+    dims = m.graph.input[0].type.tensor_type.shape.dim
+    dims[2].dim_value = size
+    dims[3].dim_value = size
+    del m.graph.value_info[:]
+    g = m.graph
+    parts = []
+    for s in (8, 16, 32):
+        g.node.append(helper.make_node("Concat", [f"cls_{s}", f"obj_{s}", f"bbox_{s}", f"kps_{s}"], [f"faces_{s}"], axis=2))
+        parts.append(f"faces_{s}")
+    g.node.append(helper.make_node("Concat", parts, ["faces"], axis=1))
+    del g.output[:]
+    n = sum((size // s) ** 2 for s in (8, 16, 32))
+    g.output.append(helper.make_tensor_value_info("faces", TensorProto.FLOAT, [1, n, 16]))
+    m = onnx.shape_inference.infer_shapes(m)
+    onnx.checker.check_model(m, full_check=True)
+    onnx.save(m, str(dst))
 
 
 def read_vocabulary(path: Path) -> list[tuple[str, str]]:
@@ -48,10 +79,15 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     vocab_file = Path(__file__).with_name("yoloe_vocabulary.tsv")
 
-    # 1) YOLO11n
-    yolo_pt = download(f"{ASSETS}/yolo11n.pt", work / "yolo11n.pt")
-    onnx_path = YOLO(str(yolo_pt)).export(format="onnx", imgsz=512, nms=True, simplify=True, dynamic=False)
-    shutil.copy(onnx_path, out / "yolo11n.onnx")
+    # 1) YOLO26n, sin NMS (end2end=False): la red sola va mejor en el NPU y la selección se hace en la app.
+    yolo_pt = download(YOLO26N, work / "yolo26n.pt")
+    model = YOLO(str(yolo_pt))
+    onnx_path = model.export(format="onnx", imgsz=512, end2end=False, simplify=True, dynamic=False, opset=18)
+    shutil.copy(onnx_path, out / "yolo26n.onnx")
+    (out / "coco_labels.txt").write_text("\n".join(model.names[i] for i in range(len(model.names))) + "\n")
+
+    # 1b) YuNet: entrada fija de 640×640 y las 12 salidas juntas en una (la app usa la primera salida).
+    export_yunet(download(YUNET, work / "face_detection_yunet_2023mar.onnx"), out / "yunet.onnx")
 
     # 2) YOLOE con vocabulario propio
     vocab = read_vocabulary(vocab_file)

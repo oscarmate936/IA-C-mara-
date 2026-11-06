@@ -11,24 +11,51 @@ import kotlin.math.min
  */
 object PeopleCheck {
 
-    /** Cara del detector rápido (BlazeFace) con su confianza. */
+    /** Cara del detector de caras (YuNet) con su confianza. */
     data class RawFace(val box: NRect, val score: Float)
 
     /** Etiquetas de personas del detector de vocabulario abierto (YOLOE). */
     val HUMAN_LABELS = setOf("person", "child", "baby")
 
     /**
+     * Una cara cuenta si es muy clara, si la confirman los 478 puntos de la cara o si está en la cabeza de
+     * una persona clara del detector de objetos (en una foto de grupo las caras son pequeñas para los 478
+     * puntos, pero cada una está en su persona). La "cara" de un perro o un gato (dentro de un animal y de
+     * ninguna persona) no cuenta sin los 478 puntos.
+     *
      * @param landmarkFaces caras en las que el modelo de 478 puntos encontró una cara de verdad.
+     * @param objects objetos del detector del último análisis (personas y animales).
      */
-    fun faces(raw: List<RawFace>, landmarkFaces: List<NRect>, lowLight: Boolean): List<NRect> =
-        raw.filter { f ->
-            val sure = if (lowLight) FACE_SURE_LOW_LIGHT else FACE_SURE
+    fun faces(
+        raw: List<RawFace>,
+        landmarkFaces: List<NRect>,
+        lowLight: Boolean,
+        objects: List<DetectedObject> = emptyList(),
+    ): List<NRect> {
+        // Solo personas claras por sí mismas: las dudosas se confirman con las caras (no al revés).
+        val persons = objects.filter { it.label == "person" && it.score >= personSure(lowLight) }.map { it.box }
+        val animals = objects.filter { it.label in SceneRules.ANIMALS }.map { it.box }
+        return raw.filter { f ->
             val confirmed = landmarkFaces.any { overlaps(it, f.box) }
-            f.score >= sure || (confirmed && (!lowLight || f.score >= FACE_MIN_CONFIRMED_LOW_LIGHT))
+            val inPerson = persons.any { isHeadOf(f.box, it) }
+            val inAnimal = animals.any { f.box.centerX in it.left..it.right && f.box.centerY in it.top..it.bottom }
+            when {
+                confirmed -> !lowLight || f.score >= FACE_MIN_CONFIRMED_LOW_LIGHT
+                inAnimal && !inPerson -> false
+                f.score >= (if (lowLight) FACE_SURE_LOW_LIGHT else FACE_SURE) -> true
+                else -> inPerson && f.score >= (if (lowLight) FACE_WITH_PERSON_LOW_LIGHT else FACE_WITH_PERSON)
+            }
         }.map { it.box }
+    }
+
+    /** La cara está en la mitad de arriba de la persona y no es más ancha que ella. */
+    private fun isHeadOf(face: NRect, person: NRect): Boolean =
+        face.centerX in person.left..person.right &&
+            face.centerY in person.top..(person.top + person.height * 0.5f) &&
+            face.width <= person.width * 1.1f
 
     /**
-     * Objetos del detector (YOLO11) con las personas dudosas quitadas.
+     * Objetos del detector (YOLO26n o YOLO11s) con las personas dudosas quitadas.
      * @param faces caras ya confirmadas; @param pose cuerpo de la persona principal, si se detectó.
      */
     fun people(objects: List<DetectedObject>, faces: List<NRect>, pose: BodyPose?, lowLight: Boolean): List<DetectedObject> {
@@ -85,12 +112,23 @@ object PeopleCheck {
         return inside(a, b.centerX, b.centerY) && min(a.area, b.area) / max(1e-6f, max(a.area, b.area)) > 0.15f
     }
 
+    /*
+     * Umbrales de YuNet, medidos con las fotos del usuario (de día y oscurecidas con ruido, como de noche):
+     * caras reales claras 0,76–0,91 de día y 0,84–0,89 de noche; caras pequeñas de un grupo 0,5–0,86;
+     * falsos: la cara de un perro hasta 0,74 (por eso el veto de los animales), una sombra de noche 0,50 y
+     * una mano manchada de barro por debajo de 0,6.
+     */
+
     /** Confianza del detector de caras con la que no hace falta confirmar (de día / con poca luz). */
     const val FACE_SURE = 0.75f
-    const val FACE_SURE_LOW_LIGHT = 0.9f
+    const val FACE_SURE_LOW_LIGHT = 0.8f
 
     /** Con poca luz, una cara confirmada por los 478 puntos necesita al menos esta confianza. */
     const val FACE_MIN_CONFIRMED_LOW_LIGHT = 0.6f
+
+    /** Confianza que basta a una cara en la cabeza de una persona clara (de día / con poca luz). */
+    const val FACE_WITH_PERSON = 0.55f
+    const val FACE_WITH_PERSON_LOW_LIGHT = 0.65f
 
     /** Confianza del detector de objetos con la que una persona no necesita confirmación. */
     const val PERSON_SURE = 0.5f

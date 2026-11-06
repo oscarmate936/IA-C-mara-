@@ -6,7 +6,8 @@
 - NIMA estética (MobileNet, pesos de idealo, Apache 2.0) → nima_aesthetic.onnx: nota 1–10 de lo
   "bonita" que es una foto, aprendida de ~250.000 fotos puntuadas por personas (AVA).
 - YOLO11s (AGPL-3.0, uso personal) → yolo11s.onnx: detector más preciso para móviles potentes.
-- Pose Landmarker lite (MediaPipe, Apache 2.0) → pose_landmarker_lite.task.
+- Pose Landmarker full (MediaPipe, Apache 2.0) → pose_landmarker_full.task (más preciso que el lite con
+  poses difíciles: sentado, de lado, brazos cruzados).
 
 Uso: python export_ia_avanzada.py <carpeta_de_trabajo> <carpeta_assets_models>
 Los pesos se cargan siempre en modo seguro (sin ejecutar código de los archivos descargados).
@@ -34,8 +35,8 @@ NIMA = (
     "weights_mobilenet_aesthetic_0.07.hdf5"
 )
 POSE = (
-    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/"
-    "pose_landmarker_lite.task"
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/"
+    "pose_landmarker_full.task"
 )
 YOLO11S = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt"
 
@@ -227,7 +228,7 @@ def main() -> None:
     if "yolo" in only:
         export_yolo11s(work, out)
     if "pose" in only:
-        shutil.copy(download(POSE, work / "pose_landmarker_lite.task"), out / "pose_landmarker_lite.task")
+        shutil.copy(download(POSE, work / "pose_landmarker_full.task"), out / "pose_landmarker_full.task")
     for p in sorted(out.glob("*")):
         print(f"{p.name}: {p.stat().st_size / 1e6:.1f} MB")
     print(json.dumps({g: len(p) for g, p in SCENE_PROMPTS.items()}))

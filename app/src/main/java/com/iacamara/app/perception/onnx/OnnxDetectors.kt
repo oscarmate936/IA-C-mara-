@@ -12,6 +12,7 @@ import android.graphics.Rect
 import com.iacamara.app.perception.DetectedObject
 import com.iacamara.app.perception.Letterbox
 import com.iacamara.app.perception.NRect
+import com.iacamara.app.perception.PeopleCheck
 import com.iacamara.app.perception.SaliencyMath
 import java.io.File
 import java.nio.ByteBuffer
@@ -130,10 +131,19 @@ private fun directFloats(count: Int): FloatBuffer =
     ByteBuffer.allocateDirect(count * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
 
 /**
- * Detector tipo YOLO exportado con NMS incluido: salida [1, N, 6+] = x1, y1, x2, y2, puntuación, clase.
- * Sirve para YOLO11 (80 clases COCO) y para YOLOE (vocabulario propio).
+ * Detector tipo YOLO. Acepta los exportados con NMS incluido (salida [1, N, 6+] = x1, y1, x2, y2,
+ * puntuación, clase: YOLO11, YOLOE) y los que dan la salida de la red sin más ([1, 4 + clases, N]: YOLO26),
+ * a los que se les hace la selección aquí ([YoloPost]).
+ *
+ * @param calibrate pasa la puntuación de este modelo a la escala con la que están ajustados los umbrales
+ * de la app (la de YOLO11); por defecto la deja igual.
  */
-class YoloDetector(private val model: OnnxModel, private val size: Int, private val labels: List<String>) {
+class YoloDetector(
+    private val model: OnnxModel,
+    private val size: Int,
+    private val labels: List<String>,
+    private val calibrate: (label: String, score: Float) -> Float = { _, s -> s },
+) {
     private val square = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     private val canvas = Canvas(square)
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
@@ -149,14 +159,13 @@ class YoloDetector(private val model: OnnxModel, private val size: Int, private 
         square.getPixels(pixels, 0, size, 0, 0, size, size)
         fillChw(pixels, input, size * size)
 
-        @Suppress("UNCHECKED_CAST")
-        val rows = (model.runFirst(input, longArrayOf(1, 3, size.toLong(), size.toLong())) as Array<Array<FloatArray>>)[0]
+        val rows = YoloPost.toRows(model.runFirst(input, longArrayOf(1, 3, size.toLong(), size.toLong())))[0]
         val result = ArrayList<DetectedObject>()
         for (r in rows) {
-            val score = r[4]
-            if (score < minScore) continue
             val cls = r[5].toInt()
             val label = labels.getOrNull(cls) ?: continue
+            val score = calibrate(label, r[4])
+            if (score < minScore) continue
             val (x1, y1) = box.toNormalized(r[0], r[1])
             val (x2, y2) = box.toNormalized(r[2], r[3])
             result += DetectedObject(label, NRect.of(x1, y1, x2, y2).clamped(), score)
@@ -170,6 +179,48 @@ class YoloDetector(private val model: OnnxModel, private val size: Int, private 
             for (i in 0 until n) dst.put(((src[i] shr shift) and 0xFF) / 255f)
         }
         dst.rewind()
+    }
+}
+
+/**
+ * Caras con YuNet (OpenCV Zoo, 640×640): ve caras mucho más pequeñas que BlazeFace (las de una foto de
+ * grupo, de unos 10 píxeles), de perfil y con poca luz. Las cajas salen con el convenio de BlazeFace
+ * ([YuNetPost.blazeBox]) y en coordenadas 0..1 del bitmap.
+ */
+class YuNetDetector(private val model: OnnxModel) {
+    private val size = SIZE
+    private val square = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    private val canvas = Canvas(square)
+    private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val pixels = IntArray(size * size)
+    private val input = directFloats(3 * size * size)
+
+    fun detect(bitmap: Bitmap, minScore: Float = YuNetPost.MIN_SCORE): List<PeopleCheck.RawFace> {
+        // Pegada arriba a la izquierda y con relleno negro, como OpenCV.
+        val scale = size / maxOf(bitmap.width, bitmap.height).toFloat()
+        val nw = Math.round(bitmap.width * scale).coerceIn(1, size)
+        val nh = Math.round(bitmap.height * scale).coerceIn(1, size)
+        canvas.drawColor(Color.BLACK)
+        canvas.drawBitmap(bitmap, null, Rect(0, 0, nw, nh), paint)
+        square.getPixels(pixels, 0, size, 0, 0, size, size)
+        // BGR de 0 a 255, sin normalizar.
+        input.rewind()
+        for (shift in intArrayOf(0, 8, 16)) {
+            for (p in pixels) input.put(((p shr shift) and 0xFF).toFloat())
+        }
+        input.rewind()
+        @Suppress("UNCHECKED_CAST")
+        val rows = (model.runFirst(input, longArrayOf(1, 3, size.toLong(), size.toLong())) as Array<Array<FloatArray>>)[0]
+        val w = bitmap.width * scale
+        val h = bitmap.height * scale
+        return YuNetPost.decode(rows, size, minScore).map { f ->
+            val b = YuNetPost.blazeBox(f)
+            PeopleCheck.RawFace(NRect(b[0] / w, b[1] / h, b[2] / w, b[3] / h).clamped(), f.score)
+        }
+    }
+
+    companion object {
+        const val SIZE = 640
     }
 }
 

@@ -68,6 +68,18 @@ object OutputCheck {
     /** Puntuación a partir de la cual una detección es clara (para comparar aceleradores). */
     const val CLEAR = 0.45f
 
+    /** YuNet (caras): las mismas caras claras en el acelerador que en el procesador. */
+    fun sameFaces(reference: Any, candidate: Any): Boolean =
+        sameDetections(YuNetPost.rows(reference), YuNetPost.rows(candidate), FACE_CLEAR)
+
+    fun hasFaces(output: Any): Boolean = hasDetections(YuNetPost.rows(output), FACE_CLEAR)
+
+    fun explainFaces(reference: Any, candidate: Any): String =
+        explainDetections(YuNetPost.rows(reference), YuNetPost.rows(candidate))
+
+    /** Confianza de YuNet a partir de la cual una cara es clara (para comparar aceleradores). */
+    const val FACE_CLEAR = 0.6f
+
     /** Salidas densas (mapas, vectores): misma "forma" según el coseno entre ambas. */
     fun similar(reference: Any, candidate: Any, minCosine: Float): Boolean {
         val a = flatten(reference)
@@ -129,9 +141,9 @@ object OutputCheck {
         return out.toFloatArray()
     }
 
-    @Suppress("UNCHECKED_CAST")
+    /** Detecciones x1, y1, x2, y2, puntuación, clase (las de un YOLO sin NMS se seleccionan antes). */
     private fun rows(value: Any): List<FloatArray> {
-        val batch = value as? Array<*> ?: return emptyList()
+        val batch = (if (YoloPost.isRaw(value)) YoloPost.toRows(value) else value) as? Array<*> ?: return emptyList()
         val first = batch.firstOrNull() as? Array<*> ?: return emptyList()
         return first.filterIsInstance<FloatArray>().filter { it.size >= 6 }
     }

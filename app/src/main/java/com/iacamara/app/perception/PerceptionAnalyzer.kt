@@ -3,7 +3,6 @@ package com.iacamara.app.perception
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
-import android.graphics.RectF
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
@@ -14,7 +13,6 @@ import com.google.mediapipe.framework.image.MPImage
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
-import com.google.mediapipe.tasks.vision.facedetector.FaceDetector
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
@@ -27,6 +25,8 @@ import com.iacamara.app.perception.onnx.OnnxModel
 import com.iacamara.app.perception.onnx.OutputCheck
 import com.iacamara.app.perception.onnx.SaliencyDetector
 import com.iacamara.app.perception.onnx.YoloDetector
+import com.iacamara.app.perception.onnx.YoloPost
+import com.iacamara.app.perception.onnx.YuNetDetector
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,14 +36,14 @@ import kotlin.math.hypot
 /**
  * Capa 1 del plan: percepción en vivo, con varios modelos que van dentro del APK (sin internet):
  *
- * - Caras (MediaPipe BlazeFace): en cada fotograma.
+ * - Caras (YuNet, 640 px): casi en cada fotograma (en el NPU o la GPU si el móvil lo acelera).
  * - Ojos y mirada (MediaPipe Face Landmarker): ~4 veces por segundo si hay caras.
  * - Cuerpo (MediaPipe Pose, 33 puntos): ~4 veces por segundo si hay personas.
  * - Tipo de escena (CLIP pequeño, descripciones de 14 tipos de escena): ~2 veces por segundo.
  * - Estética (NIMA, nota 1–10): ~1 vez por segundo.
- * - Objetos (YOLO11n; YOLO11s si el móvil acelera la IA): ~5 veces por segundo.
+ * - Objetos (YOLO26n; YOLO11s si el móvil acelera la IA): ~5 veces por segundo.
  * - Vocabulario abierto (YOLOE con ~120 cosas habituales en fotos): ~1 vez por segundo; da nombre
- *   a lo que YOLO11 no conoce y anula sus confusiones.
+ *   a lo que el detector no conoce y anula sus confusiones.
  * - Saliencia (U²-Net): ~1–2 veces por segundo; encuentra "lo importante" aunque no tenga nombre.
  * - Estructura (sin modelo): ~3 veces por segundo; líneas guía, punto de fuga, simetría y reflejos
  *   para elegir la guía de composición.
@@ -81,7 +81,6 @@ class PerceptionAnalyzer(
     @Volatile private var closedModels = false
 
     // MediaPipe
-    private var faceDetector: FaceDetector? = null
     private val faceLandmarker = MpModel("ojos", acceleratorStore) { delegate ->
         FaceLandmarker.createFromOptions(
             appContext,
@@ -111,10 +110,13 @@ class PerceptionAnalyzer(
     private val onnxModels = CopyOnWriteArrayList<OnnxModel>()
     @Volatile private var yolo: YoloDetector? = null
     @Volatile private var yoloModel: OnnxModel? = null
-    @Volatile private var yoloName = "YOLO11n"
+    @Volatile private var yoloName = YOLO_NAME
     private var yoloLabels: List<String> = emptyList()
     private var yoloe: YoloDetector? = null
     private var yoloeModel: OnnxModel? = null
+    private var faceDetector: YuNetDetector? = null
+    private var faceModel: OnnxModel? = null
+    private var lastRawFaces: List<PeopleCheck.RawFace> = emptyList()
     private var saliencyDetector: SaliencyDetector? = null
     private var saliencyModel: OnnxModel? = null
     private var clip: ClipSceneClassifier? = null
@@ -130,6 +132,8 @@ class PerceptionAnalyzer(
     private val objectTracker = ObjectTracker()
     private val structureStabilizer = StructureStabilizer()
 
+    /** Caras: en cada fotograma si el detector tarda poco (en el NPU, ~1–2 ms); si no, algo menos. */
+    private val faceClock = TaskClock(MIN_FRAME_INTERVAL_MS, 4f)
     private val labelsClock = TaskClock(450, 3f)
     private val landmarksClock = TaskClock(250, 3f)
     private val poseClock = TaskClock(250, 3f)
@@ -174,22 +178,15 @@ class PerceptionAnalyzer(
         initialized = true
         val failures = mutableListOf<String>()
         faceDetector = load("caras", failures) {
-            FaceDetector.createFromOptions(
-                appContext,
-                FaceDetector.FaceDetectorOptions.builder()
-                    .setBaseOptions(base(FACE_MODEL, Delegate.CPU))
-                    .setRunningMode(RunningMode.IMAGE)
-                    .setMinDetectionConfidence(0.5f)
-                    .build(),
-            )
+            onnx(FACE_MODEL, FACE_KEY).let { faceModel = it; YuNetDetector(it) }
         }
         load("ojos", failures) { faceLandmarker.load() }
         load("cuerpo", failures) { poseLandmarker.load() }
         yolo = load("objetos", failures) {
             yoloLabels = readLines(YOLO_LABELS)
-            val model = onnx(YOLO_MODEL, "yolo11n")
+            val model = onnx(YOLO_MODEL, YOLO_KEY)
             yoloModel = model
-            YoloDetector(model, 512, yoloLabels)
+            YoloDetector(model, 512, yoloLabels, YoloPost::yolo26Score)
         }
         yoloe = load("vocabulario abierto", failures) {
             val rows = readLines(YOLOE_LABELS).map { it.split('\t') }
@@ -246,6 +243,14 @@ class PerceptionAnalyzer(
                 },
             )
         }
+        faceModel?.let {
+            accelerator.optimize(
+                Accelerator.Job(
+                    it, { a, b -> OutputCheck.sameFaces(a, b) }, informative = { out -> OutputCheck.hasFaces(out) },
+                    explain = { a, b -> OutputCheck.explainFaces(a, b) }, onDone = accelerated(faceClock),
+                ),
+            )
+        }
         aestheticModel?.let {
             accelerator.optimize(
                 Accelerator.Job(
@@ -267,7 +272,7 @@ class PerceptionAnalyzer(
     }
 
     /**
-     * Si el móvil acelera la IA, prueba YOLO11s (más preciso que YOLO11n). Solo se queda si va en el
+     * Si el móvil acelera la IA, prueba YOLO11s (más preciso que YOLO26n). Solo se queda si va en el
      * NPU o la GPU, da los mismos resultados que en el procesador y tarda como mucho 40 ms.
      */
     private fun tryBiggerDetector(small: OnnxModel) {
@@ -369,21 +374,24 @@ class PerceptionAnalyzer(
         lastSaliencyGrid = null
         lastSaliencyRaw = null
         lastFaceDetails = emptyList()
+        lastRawFaces = emptyList()
         lastPose = null
         structureStabilizer.clear()
         lastStructure = null
-        listOf(yoloClock, yoloeClock, saliencyClock, landmarksClock, structureClock, poseClock).forEach { it.reset() }
+        listOf(faceClock, yoloClock, yoloeClock, saliencyClock, landmarksClock, structureClock, poseClock).forEach { it.reset() }
     }
 
     private fun process(bitmap: Bitmap, modelRotation: Int, front: Boolean, now: Long) {
         val start = SystemClock.elapsedRealtime()
         val mpImage: MPImage = BitmapImageBuilder(bitmap).build()
-        val w = bitmap.width.toFloat()
-        val h = bitmap.height.toFloat()
 
-        // Caras: en cada fotograma (muy rápido). Solo cuentan cuando se confirman (más abajo).
-        val rawFaces = faceDetector?.detect(mpImage)?.detections().orEmpty()
-            .map { PeopleCheck.RawFace(normalize(it.boundingBox(), w, h), it.categories().firstOrNull()?.score() ?: 0f) }
+        // Caras: casi en cada fotograma (también mientras se mide un acelerador: hacen falta siempre).
+        // Solo cuentan cuando se confirman (más abajo).
+        val detector = faceDetector
+        if (detector != null && faceClock.overdue(now, slowdown) >= 1f) {
+            timed(faceClock, now) { lastRawFaces = detector.detect(bitmap) }
+        }
+        val rawFaces = lastRawFaces
         // Mientras se mide la velocidad de un acelerador, el resto de modelos espera (comparación justa).
         val paused = accelerator.measuring
 
@@ -431,7 +439,7 @@ class PerceptionAnalyzer(
         }
 
         // Caras y personas confirmadas por otro modelo (de noche, la ropa tendida no es una persona).
-        val faces = PeopleCheck.faces(rawFaces, lastFaceDetails.map { it.box }, lowLight)
+        val faces = PeopleCheck.faces(rawFaces, lastFaceDetails.map { it.box }, lowLight, lastObjects)
         val objects = PeopleCheck.people(lastObjects, faces, lastPose, lowLight)
         val named = PeopleCheck.named(lastOpenVocab, objects, faces, lastPose, lowLight)
 
@@ -485,6 +493,7 @@ class PerceptionAnalyzer(
                 "Saliencia ${backendOf(saliencyModel)}" to saliencyClock.averageMs.toInt(),
                 "Escena ${backendOf(clipModel)}" to labelsClock.averageMs.toInt(),
                 "Estética ${backendOf(aestheticModel)}" to aestheticClock.averageMs.toInt(),
+                "Caras ${backendOf(faceModel)}" to faceClock.averageMs.toInt(),
                 "Ojos ${faceLandmarker.label}" to landmarksClock.averageMs.toInt(),
                 "Cuerpo ${poseLandmarker.label}" to poseClock.averageMs.toInt(),
                 "Líneas CPU" to structureClock.averageMs.toInt(),
@@ -509,7 +518,7 @@ class PerceptionAnalyzer(
     }
 
     private fun yoloLabel(): String {
-        val testingBig = yoloName == "YOLO11n" && accelerator.probing?.startsWith("$YOLO_S_KEY ") == true
+        val testingBig = yoloName == YOLO_NAME && accelerator.probing?.startsWith("$YOLO_S_KEY ") == true
         return "$yoloName ${backendOf(yoloModel)}" + if (testingBig) " (probando YOLO11s…)" else ""
     }
 
@@ -522,7 +531,7 @@ class PerceptionAnalyzer(
     private fun runClip(bitmap: Bitmap) {
         val scores = clip?.classify(bitmap) ?: return
         lastSceneScores = scores
-        // CLIP también confirma si hay un animal (para descartar "animales" dudosos de YOLO11).
+        // CLIP también confirma si hay un animal (para descartar "animales" dudosos del detector).
         // Umbral bajo: en un salón o un paisaje casi toda la probabilidad se la lleva la escena.
         animalEvidence = (scores[SceneType.MASCOTA] ?: 0f) >= 0.02f
     }
@@ -580,7 +589,7 @@ class PerceptionAnalyzer(
         val detector = yolo ?: return
         val raw = detector.detect(bitmap, minScore = 0.3f)
         // Veto: si el detector de vocabulario abierto ve otra cosa (no animal) en el mismo sitio,
-        // un "animal" dudoso de YOLO11 se descarta (la "jirafa" de hierro).
+        // un "animal" dudoso del detector se descarta (la "jirafa" de hierro).
         val filtered = raw.filter { d ->
             // El detector de vocabulario abierto también vale como confirmación de un animal.
             val evidence = animalEvidence || lastOpenVocab.any { o ->
@@ -688,9 +697,6 @@ class PerceptionAnalyzer(
         return rotated
     }
 
-    private fun normalize(box: RectF, w: Float, h: Float): NRect =
-        NRect(box.left / w, box.top / h, box.right / w, box.bottom / h).clamped()
-
     private fun spanishOpen(label: String): String = yoloeSpanish[label] ?: label
 
     /**
@@ -706,9 +712,8 @@ class PerceptionAnalyzer(
     /** Caras en una foto reducida y derecha (para la mejora automática). Coordenadas 0..1. */
     @Synchronized
     fun findFaces(bitmap: Bitmap): List<NRect> = runCatching {
-        val w = bitmap.width.toFloat()
-        val h = bitmap.height.toFloat()
-        faceDetector?.detect(BitmapImageBuilder(bitmap).build())?.detections().orEmpty().map { normalize(it.boundingBox(), w, h) }
+        // Solo las claras: una cara dudosa (la de un perro) cambiaría la exposición de la foto.
+        faceDetector?.detect(bitmap, PeopleCheck.FACE_SURE).orEmpty().map { it.box }
     }.getOrDefault(emptyList())
 
     /** Para elegir la mejor foto de una ráfaga: nota de estética (NIMA) de una foto reducida y derecha. */
@@ -723,7 +728,6 @@ class PerceptionAnalyzer(
         foreground = false
         acceleratorStore.setActive(false)
         accelerator.close()
-        runCatching { faceDetector?.close() }
         faceLandmarker.close()
         poseLandmarker.close()
         onnxModels.forEach { runCatching { it.close() } }
@@ -738,17 +742,20 @@ class PerceptionAnalyzer(
 
     companion object {
         private const val TAG = "Percepcion"
-        private const val FACE_MODEL = "models/blaze_face_short_range.tflite"
+        private const val FACE_MODEL = "models/yunet.onnx"
+        private const val FACE_KEY = "yunet"
         private const val LANDMARKS_MODEL = "models/face_landmarker.task"
-        private const val POSE_MODEL = "models/pose_landmarker_lite.task"
+        private const val POSE_MODEL = "models/pose_landmarker_full.task"
         private const val CLIP_MODEL = "models/clip_image.onnx"
         private const val CLIP_TEXT = "models/clip_scenes.bin"
         private const val CLIP_NAMES = "models/clip_scenes.tsv"
         private const val NIMA_MODEL = "models/nima_aesthetic.onnx"
-        private const val YOLO_MODEL = "models/yolo11n.onnx"
+        private const val YOLO_MODEL = "models/yolo26n.onnx"
+        private const val YOLO_KEY = "yolo26n"
+        private const val YOLO_NAME = "YOLO26n"
         private const val YOLO_S_MODEL = "models/yolo11s.onnx"
         private const val YOLO_S_KEY = "yolo11s"
-        private const val YOLO_LABELS = "models/yolo11n_labels.txt"
+        private const val YOLO_LABELS = "models/coco_labels.txt"
         private const val YOLOE_MODEL = "models/yoloe_vocab.onnx"
         private const val YOLOE_LABELS = "models/yoloe_labels.tsv"
         private const val SALIENCY_MODEL = "models/u2netp.onnx"
@@ -765,7 +772,7 @@ class PerceptionAnalyzer(
             SceneType.CIUDAD, SceneType.PAISAJE, SceneType.PLAYA, SceneType.NIEVE, SceneType.ATARDECER, SceneType.NOCHE,
         )
 
-        /** Nombres del vocabulario abierto que sí son animales (no vetan a un animal de YOLO11). */
+        /** Nombres del vocabulario abierto que sí son animales (no vetan a un animal del detector). */
         private val OPEN_VOCAB_ANIMALS = setOf(
             "person", "child", "baby", "dog", "cat", "bird", "chicken", "horse", "cow", "goat", "pig",
             "sheep", "butterfly", "insect", "fish",
