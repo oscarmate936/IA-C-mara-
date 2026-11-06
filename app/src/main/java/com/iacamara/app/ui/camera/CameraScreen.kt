@@ -707,6 +707,9 @@ fun CameraScreen(session: CameraSession, onOpenSettings: () -> Unit) {
                     }
                     explanation?.let { SmallNotice("¿Por qué? $it") }
                     if (iaEnabled && state.ready && !state.analysisActive) SmallNotice("IA en pausa en este modo")
+                    if (iaActive && currentPerception?.thermalLimited == true) {
+                        SmallNotice("🌡 Móvil muy caliente: IA reducida para que se enfríe")
+                    }
                     iaError?.let { error -> SmallNotice(error) }
                 }
                 Column(

@@ -257,6 +257,9 @@ object Sessions {
 class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
     @Volatile private var closed = false
 
+    /** El móvil está muy caliente: las pruebas nuevas esperan (cada una ejecuta el modelo muchas veces). */
+    @Volatile var isHot: () -> Boolean = { false }
+
     /** Mientras se mide la velocidad, el visor pausa los demás modelos para que la comparación sea justa. */
     val measuring: Boolean get() = measuringFlag && !closed
 
@@ -350,6 +353,10 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
             store.markBroken(m.key, remembered, describe(session.exceptionOrNull()))
         }
 
+        // Con el móvil muy caliente, las pruebas esperan a que se enfríe.
+        while (isHot() && !closed) Thread.sleep(HOT_WAIT_MS)
+        if (closed) return false
+
         // Primera vez: una imagen real con la que se pueda comparar, y su referencia en el procesador.
         val (sample, reference) = informativeSample(job) ?: return true
         val cpuMs = measure { m.runSample(null, sample) }
@@ -385,6 +392,12 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
                         throw e
                     }
                 }
+            }
+            if (result.exceptionOrNull() is NotEnoughImages) {
+                // No hubo imágenes útiles suficientes para decidir (p. ej. ninguna cara más a la vista): no es
+                // un fallo del acelerador. Se vuelve a intentar más tarde, sin dar nada por descartado.
+                best?.second?.close()
+                return true
             }
             result.exceptionOrNull()?.let { e ->
                 Log.w(TAG, "${m.key} no funciona en ${backend.label}: ${e.message}")
@@ -430,12 +443,15 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
         var tried = 1
         while (tried < 3 && passes < 2 && passes + (3 - tried) >= 2 && !closed) {
             job.sampleFrom.discardSample() // otra imagen distinta
-            val (sample, reference) = informativeSample(job) ?: break
+            val (sample, reference) = informativeSample(job) ?: throw NotEnoughImages()
             if (compare(reference, job.model.runSample(session, sample))) passes++
             tried++
         }
         return passes to why
     }
+
+    /** Faltaron imágenes útiles para comparar (no dice nada del acelerador). */
+    private class NotEnoughImages : Exception("no hubo imágenes suficientes para comparar")
 
     /** Una imagen real cuya salida en el procesador sirve para comparar, con esa salida. */
     private fun informativeSample(job: Job): Pair<OnnxModel.Sample, Any>? {
@@ -507,6 +523,9 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
 
         /** Veces que un modelo vuelve a la cola esperando una imagen útil (en total ~2,5 min). */
         const val MAX_ATTEMPTS = 6
+
+        /** Cada cuánto se vuelve a mirar si el móvil se ha enfriado. */
+        const val HOT_WAIT_MS = 10_000L
 
         /** Un solo hilo de pruebas para toda la app. */
         val executor: ExecutorService = Executors.newSingleThreadExecutor { r ->

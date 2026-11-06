@@ -5,7 +5,8 @@
   el codificador de imagen; el de texto se usa aquí una vez.
 - NIMA estética (MobileNet, pesos de idealo, Apache 2.0) → nima_aesthetic.onnx: nota 1–10 de lo
   "bonita" que es una foto, aprendida de ~250.000 fotos puntuadas por personas (AVA).
-- YOLO11s (AGPL-3.0, uso personal) → yolo11s.onnx: detector más preciso para móviles potentes.
+- YOLO11s (AGPL-3.0, uso personal) → yolo11s.onnx: detector más preciso para móviles potentes, sin la
+  selección de detecciones (cortar_nms.py; la hace la app).
 - Pose Landmarker full (MediaPipe, Apache 2.0) → pose_landmarker_full.task (más preciso que el lite con
   poses difíciles: sentado, de lado, brazos cruzados).
 
@@ -212,7 +213,10 @@ def export_yolo11s(work: Path, out: Path) -> None:
 
     pt = download(YOLO11S, work / "yolo11s.pt")
     onnx_path = YOLO(str(pt)).export(format="onnx", imgsz=512, nms=True, simplify=True, dynamic=False)
-    shutil.copy(onnx_path, out / "yolo11s.onnx")
+    # Sin la selección de detecciones (el NPU la ejecuta mal): la hace la app.
+    from cortar_nms import cut_nms
+
+    cut_nms(str(onnx_path), str(out / "yolo11s.onnx"))
 
 
 def main() -> None:

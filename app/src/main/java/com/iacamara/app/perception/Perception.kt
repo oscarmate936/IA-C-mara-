@@ -192,4 +192,6 @@ data class Perception(
     val faceLight: FaceLight? = null,
     /** Desenfoque por el pulso previsto si se dispara ahora (píxeles de la foto): giro × exposición × focal. */
     val blurPx: Float? = null,
+    /** El móvil está muy caliente y la IA trabaja a medio gas (solo lo esencial). */
+    val thermalLimited: Boolean = false,
 )

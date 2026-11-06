@@ -13,8 +13,8 @@ versiones de 8 bits para el NPU, con `scripts/cuantizar_npu.py`.
 | `clip_image.onnx` (45 MB, int8) + `clip_scenes.bin/.tsv` | ONNX Runtime | **CLIP pequeño (TinyCLIP ViT-40M/32, LAION-400M).** Compara la imagen con descripciones de 14 tipos de escena (atardecer, playa, comida, arquitectura…) para reconocer la escena; también confirma si hay animales. Sustituye a EfficientNet (que reconocía objetos, no escenas) | ~2/s | MIT |
 | `nima_aesthetic.onnx` (12,9 MB) | ONNX Runtime | **NIMA estética** (MobileNet, pesos de idealo): nota 1–10 aprendida de ~250.000 fotos puntuadas por personas. Suma en la puntuación del encuadre y desempata la mejor foto de la ráfaga | ~1/s | Apache 2.0 |
 | `yolo26n.onnx` (9,9 MB) + `coco_labels.txt` | ONNX Runtime | **Opción 2.** Detector rápido de 80 objetos (personas, animales, comida…), entrada 512 px. YOLO26n (2026, sucesor de YOLO11n: 40,9 frente a 39,5 de precisión COCO). Se exporta sin NMS (la red sola, que va mejor en el NPU) y la selección de detecciones la hace la app (`YoloPost.kt`, idéntica a la de Ultralytics: comprobado con 69 detecciones en 15 fotos). Sus puntuaciones se pasan a la escala de YOLO11 (personas +0,04, otros objetos −0,05; medido con 346 personas emparejadas) para que valgan todos los umbrales | ~5/s | AGPL-3.0 (uso personal) |
-| `yolo11s.onnx` (38 MB) | ONNX Runtime | Detector más preciso (47,0 frente a 39,5 de precisión COCO). Solo se usa si el móvil lo ejecuta en el NPU o la GPU en ≤ 40 ms y da los mismos resultados que en el procesador | ~5/s | AGPL-3.0 (uso personal) |
-| `yoloe_vocab.onnx` (39 MB) + `yoloe_labels.tsv` | ONNX Runtime | **Opción 3.** Detector de vocabulario abierto (YOLOE-11s) con ~120 cosas habituales en fotos (estructura metálica, pila de troncos, volcán, farola…). Da nombre a lo que el detector no conoce, anula sus confusiones y nombra lo que distrae en los bordes | ~1/s | AGPL-3.0 (uso personal) |
+| `yolo11s.onnx` (38 MB) | ONNX Runtime | Detector más preciso (47,0 frente a 39,5 de precisión COCO), sin la selección de detecciones dentro (la hace la app, como con YOLO26n). Solo se usa si el móvil lo ejecuta en el NPU o la GPU en ≤ 40 ms y da los mismos resultados que en el procesador | ~5/s | AGPL-3.0 (uso personal) |
+| `yoloe_vocab.onnx` (39 MB) + `yoloe_labels.tsv` | ONNX Runtime | **Opción 3.** Detector de vocabulario abierto (YOLOE-11s), sin la selección de detecciones dentro (la hace la app), con ~120 cosas habituales en fotos (estructura metálica, pila de troncos, volcán, farola…). Da nombre a lo que el detector no conoce, anula sus confusiones y nombra lo que distrae en los bordes | ~1/s | AGPL-3.0 (uso personal) |
 | `u2netp.onnx` (4,6 MB) | ONNX Runtime | **Opción 1.** Saliencia (U²-Net pequeño): encuentra "lo importante" de la imagen aunque no tenga nombre y mide lo que distrae en los bordes | ~1–2/s | Apache 2.0 |
 | `u2netp_int8.onnx` (3,5 MB), `yolo26n_int8.onnx` (3,1 MB), `yolo11s_int8.onnx` (10,2 MB), `yunet_int8.onnx` (0,2 MB) | ONNX Runtime (QNN) | Los mismos modelos en enteros de 8 bits, **solo para el NPU** de los Snapdragon que no admiten coma flotante (el Snapdragon 6 Gen 4 del Honor). Solo se prueban si el NPU normal falla | — | Las del original |
 
@@ -31,7 +31,8 @@ Notas:
   imágenes en las que detecten algo claro (puntuación ≥ 0,45: las detecciones dudosas aparecen y desaparecen con
   cualquier diferencia mínima de precisión, sobre todo con niebla o de noche), y cada acelerador tiene que coincidir
   en 2 de 3 imágenes reales. La versión de 8 bits solo se prueba si el NPU normal no llega a ejecutarse.
-  Si un acelerador no coincide, el diagnóstico dice en qué difiere (para los detectores: qué ve el procesador y qué
+  Si no aparecen imágenes útiles suficientes para comparar (p. ej. ninguna cara más a la vista), no se descarta el
+  acelerador: se vuelve a intentar más tarde. Si un acelerador no coincide, el diagnóstico dice en qué difiere (para los detectores: qué ve el procesador y qué
   ve el acelerador, clase:puntuación e IoU; para los mapas, el coseno). CLIP no se prueba en el NPU: en coma flotante
   de 16 bits algún valor intermedio se desborda y sale NaN (comprobado simulándolo); en el procesador tarda ~25–40 ms.
   YOLO26n, YOLOE y YuNet simulados en 16 bits sí coinciden con el procesador (8/8, 7/7 y 86/86). Se prueban primero los
@@ -64,6 +65,15 @@ Notas:
 - **YOLOE** es el sucesor de YOLO-World del mismo equipo (Ultralytics): detecta cualquier cosa a partir de una lista de
   nombres. Se eligió porque el codificador de texto de YOLO-World no se pudo descargar en el entorno de compilación.
   El vocabulario se "hornea" en el modelo al exportarlo: para añadir cosas nuevas se edita la lista y se reexporta.
+- **Detectores sin la selección dentro (NMS).** Exportados con la selección incluida, en el NPU del S22+ las cajas
+  y las puntuaciones salían bien, pero la clase salía corrupta (120 → 0, 108 → 131008: esa parte usa operaciones de
+  tamaño variable que el NPU ejecuta mal). Ahora YOLO26n, YOLO11s y YOLOE dan la salida de la red y la app hace la
+  selección (`YoloPost.kt`); `scripts/cortar_nms.py` corta los modelos ya exportados. Mismo resultado que con la
+  selección incluida: 161/161 imágenes (YOLO11s, 975 detecciones; YOLOE, 375). Simulados en 16 bits: 8/8 y 7/7.
+  YOLO11s de 8 bits (Honor): 57/58. YOLOE de 8 bits sigue sin pasar (22/50).
+- **Calor.** Con el móvil caliente la IA se reduce sola: moderado → todo más espaciado; grave → además fuera YOLOE,
+  el cuerpo y la estética, y las pruebas de aceleradores esperan a que se enfríe; crítico → solo caras, objetos,
+  ojos y luz. El visor lo avisa («Móvil muy caliente: IA reducida»).
 - **Caras: comprobación cruzada.** Una cara de YuNet cuenta si es clara (≥ 0,75 de día, ≥ 0,8 con poca luz), si la
   confirman los 478 puntos de la cara o si está en la cabeza de una persona clara del detector de objetos (≥ 0,55 de
   día, ≥ 0,65 de noche: en un grupo, las caras pequeñas no las ven los 478 puntos, pero cada una está en su persona).

@@ -76,7 +76,7 @@ class PerceptionAnalyzer(
 
     // Aceleración (NPU/GPU) con vuelta al procesador normal.
     private val acceleratorStore = AcceleratorStore.get(appContext)
-    private val accelerator = Accelerator(acceleratorStore)
+    private val accelerator = Accelerator(acceleratorStore).also { it.isHot = { hot } }
     @Volatile private var foreground = false
     @Volatile private var closedModels = false
 
@@ -398,8 +398,8 @@ class PerceptionAnalyzer(
 
         // Tareas medianas: escena (CLIP) o estética (NIMA), la que más atrasada vaya.
         val medium = listOfNotNull(
-            clip?.let { "escena" to labelsClock.overdue(now, slowdown) },
-            aestheticScorer?.let { "estética" to aestheticClock.overdue(now, slowdown) },
+            clip?.takeIf { !critical }?.let { "escena" to labelsClock.overdue(now, slowdown) },
+            aestheticScorer?.takeIf { !hot }?.let { "estética" to aestheticClock.overdue(now, slowdown) },
         ).filter { it.second >= 1f && !paused }.maxByOrNull { it.second }?.first
         when (medium) {
             "escena" -> timed(labelsClock, now) { runClip(bitmap) }
@@ -412,7 +412,7 @@ class PerceptionAnalyzer(
         }
         // Cuerpo: solo si puede haber personas a la vista (también sirve para confirmarlas).
         val people = rawFaces.isNotEmpty() || lastObjects.any { it.label == "person" }
-        if (people && !paused && poseClock.overdue(now, slowdown) >= 1f) {
+        if (people && !paused && !hot && poseClock.overdue(now, slowdown) >= 1f) {
             timed(poseClock, now) { runPose(mpImage) }
         } else if (!people) {
             lastPose = null
@@ -421,8 +421,8 @@ class PerceptionAnalyzer(
         // Como mucho una tarea pesada por fotograma: la que más atrasada vaya.
         val heavy = listOfNotNull(
             yolo?.let { "yolo" to yoloClock.overdue(now, slowdown) },
-            yoloe?.let { "yoloe" to yoloeClock.overdue(now, slowdown) },
-            saliencyDetector?.let { "saliencia" to saliencyClock.overdue(now, slowdown) },
+            yoloe?.takeIf { !hot }?.let { "yoloe" to yoloeClock.overdue(now, slowdown) },
+            saliencyDetector?.takeIf { !critical }?.let { "saliencia" to saliencyClock.overdue(now, slowdown) },
         ).filter { it.second >= 1f && !paused }.maxByOrNull { it.second }?.first
         when (heavy) {
             "yolo" -> timed(yoloClock, now) { runYolo(bitmap) }
@@ -445,7 +445,7 @@ class PerceptionAnalyzer(
         val named = PeopleCheck.named(lastOpenVocab, objects, faces, lastPose, lowLight)
 
         val subjectInModel = chooseSubject(faces, objects, salientModel)
-        if (!paused && structureClock.overdue(now, slowdown) >= 1f) {
+        if (!paused && !critical && structureClock.overdue(now, slowdown) >= 1f) {
             timed(structureClock, now) { runStructure(bitmap, subjectInModel?.box) }
         }
         val light = lightAnalyzer.analyze(bitmap, subjectInModel?.box)
@@ -505,6 +505,7 @@ class PerceptionAnalyzer(
             aesthetic = lastAesthetic,
             faceLight = faceLight,
             blurPx = meta?.let { BlurRisk.blurPixels(motion.shake, it.exposureNs, zoomRatio) },
+            thermalLimited = hot,
         )
     }
 
@@ -679,16 +680,27 @@ class PerceptionAnalyzer(
         lastSubjectMs = now
     }
 
+    /**
+     * Calor: moderado → todo más espaciado; grave → además fuera YOLOE, el cuerpo y la estética; crítico →
+     * solo lo esencial (caras, objetos, ojos y luz). Así el móvil se enfría en vez de bajar aún más el
+     * rendimiento (o cerrar la cámara).
+     */
     private fun checkThermal(now: Long) {
         if (now - lastThermalCheckMs < 2000) return
         lastThermalCheckMs = now
         val status = powerManager?.currentThermalStatus ?: PowerManager.THERMAL_STATUS_NONE
+        thermal = status
         slowdown = when {
+            status >= PowerManager.THERMAL_STATUS_CRITICAL -> 4L
             status >= PowerManager.THERMAL_STATUS_SEVERE -> 3L
             status >= PowerManager.THERMAL_STATUS_MODERATE -> 2L
             else -> 1L
         }
     }
+
+    @Volatile private var thermal = PowerManager.THERMAL_STATUS_NONE
+    private val hot: Boolean get() = thermal >= PowerManager.THERMAL_STATUS_SEVERE
+    private val critical: Boolean get() = thermal >= PowerManager.THERMAL_STATUS_CRITICAL
 
     private fun rotate(bitmap: Bitmap, degrees: Int): Bitmap {
         if (degrees == 0) return bitmap

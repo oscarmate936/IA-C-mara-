@@ -85,4 +85,7 @@ Cada caso tiene su prueba automática (`ColorFidelityTest`, `BurstFeaturesTest`)
 | Retrato con gente lejos al fondo | YuNet ve caras pequeñas al fondo y la escena pasaba a «Grupo» | Solo cuentan las caras de tamaño parecido a la principal (un grupo lejano sigue siendo grupo) |
 | Disparo inteligente en grupos de más de 5 | Esperaba medir los ojos de todas las caras (el modelo de ojos mide 5 como mucho y no las diminutas): no disparaba nunca | Ojos abiertos en todas las caras que se pueden medir |
 | Error al guardar una foto procesada | Quedaba una foto «pendiente» invisible ocupando sitio; si fallaban solo los datos EXIF, se perdía la foto | Se borra la entrada a medias; si solo fallan los datos, la foto se queda |
+| YOLOE y YOLO11s en el NPU del S22+ | La clase de cada detección salía corrupta (las cajas, bien): siempre «resultado distinto» y en el procesador | La selección de detecciones la hace la app; la red sola va en el NPU |
+| Comprobar un acelerador sin imágenes útiles | Si tras la primera imagen no aparecía otra cara u objeto claro, el acelerador se descartaba como «resultado distinto» | Se vuelve a intentar más tarde |
+| Móvil muy caliente (temperatura crítica) | La IA seguía ejecutando todos los modelos y probando aceleradores | IA reducida por niveles hasta que se enfría, con aviso en el visor |
 | La cara de un perro | YuNet, que ve muchas más caras, le da hasta 0,74 | No cuenta una «cara» dentro de un animal y de ninguna persona |

@@ -4,7 +4,8 @@
   detecciones la hace la app, YoloPost.kt) y coco_labels.txt.
 - YuNet (caras, OpenCV Zoo, MIT) → yunet.onnx a 640×640 con una sola salida [1, 8400, 16].
 - YOLOE-11s (vocabulario abierto) con el vocabulario de yoloe_vocabulary.tsv ya integrado
-  → yoloe_vocab.onnx con NMS incluido, más yoloe_labels.tsv con los nombres en español.
+  → yoloe_vocab.onnx sin NMS (cortar_nms.py: salida [1, 4 + clases, N], la selección la hace la app),
+  más yoloe_labels.tsv con los nombres en español.
 - U²-Net pequeño (saliencia: "qué llama la atención") → u2netp.onnx (descargado de rembg).
 - Face Landmarker de MediaPipe (ojos abiertos y mirada) → face_landmarker.task.
 
@@ -97,7 +98,10 @@ def main() -> None:
     model.set_classes(names, model.get_text_pe(names))
     onnx_path = model.export(format="onnx", imgsz=480, nms=True, simplify=True, dynamic=False)
     # Solo se necesitan las cajas: se quita la rama de máscaras (output1) para que sea más rápido.
-    onnx.utils.extract_model(onnx_path, str(out / "yoloe_vocab.onnx"), ["images"], ["output0"])
+    # Y sin la selección de detecciones (el NPU la ejecuta mal y corrompe la clase): la hace la app.
+    from cortar_nms import cut_nms
+
+    cut_nms(str(onnx_path), str(out / "yoloe_vocab.onnx"))
     with open(out / "yoloe_labels.tsv", "w", encoding="utf-8") as f:
         for english, spanish in vocab:
             f.write(f"{english}\t{spanish}\n")
