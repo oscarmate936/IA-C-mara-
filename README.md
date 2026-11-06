@@ -75,3 +75,5 @@ Cada caso tiene su prueba automática (`ColorFidelityTest`, `BurstFeaturesTest`)
 | Girar el móvil durante una ráfaga | Fotos con distinta orientación que no encajaban | La orientación se fija hasta que termina la ráfaga |
 | Falta de memoria (sensores de muchos MP) | Si la fusión fallaba se perdía la foto; la mejora y la fusión podían ir a la vez | Se guarda la foto normal y se avisa; un solo trabajo pesado a la vez y el ruido de color usa 5 veces menos memoria |
 | Móviles que guardan en Display P3 | Las copias procesadas saldrían apagadas | Todo se decodifica en sRGB |
+| «Sujeto» en escenas sin protagonista | Sin persona, animal ni objeto conocido, marcaba como sujeto lo «menos aburrido» (la carretera, el cielo) y pedía centrarlo | Solo es sujeto lo que destaca de verdad (valor real del modelo, sin salir de dos bordes, no media foto); en arquitectura y paisaje se compone con líneas y horizonte |
+| Ropa tendida de noche | Se tomaba por una persona o una cara | Caras y personas confirmadas por dos modelos |

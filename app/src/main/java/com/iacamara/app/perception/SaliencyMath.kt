@@ -26,6 +26,47 @@ object SaliencyMath {
         return SaliencyMap(PORTRAIT_W, PORTRAIT_H, out)
     }
 
+    /**
+     * La región que llama la atención solo es un *sujeto* si destaca de verdad. U²-Net siempre encuentra
+     * "algo": en una calle o un paisaje sin protagonista marca la carretera o el cielo. Se exige:
+     * - que el modelo esté seguro (valor real medio ≥ [MIN_RAW], antes de normalizar el mapa);
+     * - que no salga de dos o más bordes (el cielo, el suelo, una carretera suelen hacerlo);
+     * - que no ocupe casi media foto;
+     * - en escenas donde se compone con líneas y horizonte (arquitectura, paisaje…), aún más: pequeña,
+     *   muy clara y sin tocar ningún borde.
+     *
+     * @param raw rejilla w×h con los valores del modelo (0–1) sin normalizar.
+     * @return la caja (normalizada, coordenadas de la rejilla) y su fuerza, o null si no hay sujeto.
+     */
+    fun salientSubject(raw: FloatArray, w: Int, h: Int, sceneLike: Boolean): Pair<NRect, Float>? {
+        val normalized = normalize(raw)
+        val (box, strength) = mainRegion(SaliencyMap(w, h, normalized)) ?: return null
+        var sum = 0f
+        var n = 0
+        for (j in 0 until h) for (i in 0 until w) {
+            val x = (i + 0.5f) / w
+            val y = (j + 0.5f) / h
+            if (x in box.left..box.right && y in box.top..box.bottom && normalized[j * w + i] >= 0.5f) {
+                sum += raw[j * w + i]
+                n++
+            }
+        }
+        if (n == 0) return null
+        val rawMean = sum / n
+        val edge = 1.01f / min(w, h)
+        val edges = listOf(box.left <= edge, box.top <= edge, box.right >= 1f - edge, box.bottom >= 1f - edge).count { it }
+        val ok = if (sceneLike) {
+            rawMean >= MIN_RAW_SCENE && edges == 0 && box.area in 0.015f..0.2f
+        } else {
+            rawMean >= MIN_RAW && edges < 2 && box.area in 0.015f..0.45f
+        }
+        return if (ok) box to strength else null
+    }
+
+    /** Valor real medio (0–1) que tiene que dar el modelo para que algo cuente como sujeto. */
+    const val MIN_RAW = 0.6f
+    const val MIN_RAW_SCENE = 0.75f
+
     /** Reduce un mapa denso (size×size) a una rejilla gw×gh promediando bloques. */
     fun downsample(dense: Array<FloatArray>, gw: Int, gh: Int): FloatArray {
         val h = dense.size

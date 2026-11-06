@@ -153,6 +153,10 @@ class PerceptionAnalyzer(
     private var lastAesthetic: Float? = null
     private var animalEvidence = true
     private var lastSaliencyGrid: FloatArray? = null
+    /** El mismo mapa sin normalizar (para saber si algo destaca de verdad). */
+    private var lastSaliencyRaw: FloatArray? = null
+    /** Escena del análisis anterior (para decidir con qué exigencia algo es un sujeto). */
+    private var lastScene = SceneType.GENERAL
     private var lastSaliencyW = 0
     private var lastSaliencyH = 0
     private var lastFaceDetails: List<FaceDetail> = emptyList()
@@ -363,6 +367,7 @@ class PerceptionAnalyzer(
         lastObjects = emptyList()
         lastOpenVocab = emptyList()
         lastSaliencyGrid = null
+        lastSaliencyRaw = null
         lastFaceDetails = emptyList()
         lastPose = null
         structureStabilizer.clear()
@@ -420,8 +425,9 @@ class PerceptionAnalyzer(
         val saliencyP = lastSaliencyGrid?.let {
             SaliencyMath.toPortraitGrid(it, lastSaliencyW, lastSaliencyH, modelRotation)
         }
-        val salientModel = lastSaliencyGrid?.let { grid ->
-            SaliencyMath.mainRegion(SaliencyMap(lastSaliencyW, lastSaliencyH, grid))
+        // Solo cuenta como sujeto lo que destaca de verdad (no la carretera o el cielo de un paisaje).
+        val salientModel = lastSaliencyRaw?.let { raw ->
+            SaliencyMath.salientSubject(raw, lastSaliencyW, lastSaliencyH, sceneLike = lastScene in SCENE_LIKE)
         }
 
         // Caras y personas confirmadas por otro modelo (de noche, la ropa tendida no es una persona).
@@ -440,6 +446,7 @@ class PerceptionAnalyzer(
         val scene = sceneStabilizer.update(
             SceneRules.classify(SceneInputs(front, faces, objects, lastSceneScores, light, meta)),
         )
+        lastScene = scene
 
         updateSubjectSpeed(subjectInModel, now)
 
@@ -593,7 +600,9 @@ class PerceptionAnalyzer(
     private fun runSaliency(bitmap: Bitmap) {
         val detector = saliencyDetector ?: return
         val (gw, gh) = if (bitmap.width <= bitmap.height) 24 to 32 else 32 to 24
-        lastSaliencyGrid = detector.saliency(bitmap, gw, gh)
+        val raw = detector.saliency(bitmap, gw, gh)
+        lastSaliencyRaw = raw
+        lastSaliencyGrid = SaliencyMath.normalize(raw)
         lastSaliencyW = gw
         lastSaliencyH = gh
     }
@@ -632,7 +641,7 @@ class PerceptionAnalyzer(
         // Sin nada conocido: lo que más llama la atención (U²-Net), con el nombre de YOLOE si lo sabe.
         if (salient != null) {
             val (box, strength) = salient
-            if (box.area in 0.015f..0.6f && strength >= 0.55f) {
+            if (strength >= 0.55f) {
                 val name = lastOpenVocab
                     .filter { it.score >= 0.35f && it.box.iou(box) >= 0.3f }
                     .maxByOrNull { it.score * it.box.iou(box) }
@@ -750,6 +759,11 @@ class PerceptionAnalyzer(
         private const val STRUCTURE_SIZE = 160f
 
         private val HUMANS = setOf("person", "child", "baby")
+
+        /** Escenas que se componen con líneas y horizonte: ahí "lo que llama la atención" rara vez es un sujeto. */
+        private val SCENE_LIKE = setOf(
+            SceneType.CIUDAD, SceneType.PAISAJE, SceneType.PLAYA, SceneType.NIEVE, SceneType.ATARDECER, SceneType.NOCHE,
+        )
 
         /** Nombres del vocabulario abierto que sí son animales (no vetan a un animal de YOLO11). */
         private val OPEN_VOCAB_ANIMALS = setOf(

@@ -184,7 +184,10 @@ class SaliencyDetector(private val model: OnnxModel) {
     private val mean = floatArrayOf(0.485f, 0.456f, 0.406f)
     private val std = floatArrayOf(0.229f, 0.224f, 0.225f)
 
-    /** Rejilla gw×gh (0–1) con la misma orientación que el bitmap de entrada. */
+    /**
+     * Rejilla gw×gh con la misma orientación que el bitmap de entrada, con los valores del modelo (0–1)
+     * sin normalizar: así se sabe si algo destaca de verdad o el modelo solo marca "lo menos aburrido".
+     */
     fun saliency(bitmap: Bitmap, gw: Int, gh: Int): FloatArray {
         canvas.drawBitmap(bitmap, null, Rect(0, 0, size, size), paint)
         square.getPixels(pixels, 0, size, 0, 0, size, size)
@@ -200,6 +203,6 @@ class SaliencyDetector(private val model: OnnxModel) {
 
         @Suppress("UNCHECKED_CAST")
         val dense = (model.runFirst(input, longArrayOf(1, 3, size.toLong(), size.toLong())) as Array<Array<Array<FloatArray>>>)[0][0]
-        return SaliencyMath.normalize(SaliencyMath.downsample(dense, gw, gh))
+        return SaliencyMath.downsample(dense, gw, gh)
     }
 }
