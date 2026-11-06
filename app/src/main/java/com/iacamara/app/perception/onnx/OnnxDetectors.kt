@@ -54,6 +54,9 @@ class OnnxModel(context: Context, private val assetPath: String, val key: String
         appContext.assets.list(int8Path.substringBeforeLast('/', ""))?.contains(int8Path.substringAfterLast('/')) == true
     }.getOrDefault(false)
 
+    /** Firma del modelo (tamaño de sus archivos): si cambia en una versión nueva, se vuelve a probar su acelerador. */
+    val signature: String by lazy { "${assetSize(appContext, assetPath)}:${if (hasInt8) assetSize(appContext, int8Path) else 0}" }
+
     private fun readBytes(): ByteArray = appContext.assets.open(assetPath).use { it.readBytes() }
 
     private fun readInt8Bytes(): ByteArray = appContext.assets.open(int8Path).use { it.readBytes() }
@@ -129,6 +132,10 @@ class OnnxModel(context: Context, private val assetPath: String, val key: String
 
 private fun directFloats(count: Int): FloatBuffer =
     ByteBuffer.allocateDirect(count * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+
+/** Tamaño de un archivo de los assets (los modelos van sin comprimir); -1 si no se puede saber. */
+internal fun assetSize(context: Context, path: String): Long =
+    runCatching { context.assets.openFd(path).use { it.length } }.getOrDefault(-1L)
 
 /**
  * Detector tipo YOLO. Acepta los exportados con NMS incluido (salida [1, N, 6+] = x1, y1, x2, y2,

@@ -95,6 +95,28 @@ class OutputCheckTest {
     }
 
     @Test
+    fun comprobacionDeRespaldoConLaSalidaEntera() {
+        // Una calle vacía: un YOLO sin NMS ([1][4 + clases][N]) sin nada claro que detectar.
+        val rnd = java.util.Random(1)
+        val cpu = arrayOf(Array(7) { r -> FloatArray(400) { if (r < 4) 20f + rnd.nextFloat() * 400f else rnd.nextFloat() * 0.01f } })
+        // El acelerador: lo mismo con el redondeo de 16 bits.
+        val npu = arrayOf(Array(7) { r -> FloatArray(400) { c -> cpu[0][r][c] * (1f + (rnd.nextFloat() - 0.5f) * 2e-3f) } })
+        assertTrue(OutputCheck.sameRawDetections(cpu, npu))
+        // Cajas bien pero puntuaciones estropeadas: las cajas pesan mucho más, por eso se comparan aparte.
+        val badScores = arrayOf(Array(7) { r -> if (r < 4) cpu[0][r].copyOf() else FloatArray(400) { rnd.nextFloat() * 0.01f } })
+        assertFalse(OutputCheck.sameRawDetections(cpu, badScores))
+        // Salida con NaN (desbordamiento): no vale.
+        val nan = arrayOf(Array(7) { r -> FloatArray(400) { c -> if (r == 5 && c == 3) Float.NaN else cpu[0][r][c] } })
+        assertFalse(OutputCheck.sameRawDetections(cpu, nan))
+        // Caras (YuNet, [1][N][16]): puntuaciones aparte de cajas y puntos.
+        val faces = arrayOf(Array(300) { FloatArray(16) { j -> if (j < 2) rnd.nextFloat() * 0.02f else rnd.nextFloat() * 3f - 1.5f } })
+        val facesNpu = arrayOf(Array(300) { i -> FloatArray(16) { j -> faces[0][i][j] * 1.0005f } })
+        assertTrue(OutputCheck.sameRawFaces(faces, facesNpu))
+        val facesBad = arrayOf(Array(300) { i -> FloatArray(16) { j -> if (j < 2) rnd.nextFloat() * 0.02f else faces[0][i][j] } })
+        assertFalse(OutputCheck.sameRawFaces(faces, facesBad))
+    }
+
+    @Test
     fun probabilidadesDeClip() {
         // Dos textos: la imagen se parece más al primero.
         val text = floatArrayOf(1f, 0f, 0f, 1f)

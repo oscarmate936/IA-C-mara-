@@ -80,6 +80,42 @@ object OutputCheck {
     /** Confianza de YuNet a partir de la cual una cara es clara (para comparar aceleradores). */
     const val FACE_CLEAR = 0.6f
 
+    /**
+     * Comprobación de respaldo para un YOLO sin NMS ([1][4 + clases][N]) cuando no aparece ninguna imagen con
+     * algo claro que detectar (una calle vacía): la salida entera de la red tiene que ser la misma. Las cajas
+     * (en píxeles) y las puntuaciones (0–1) se comparan por separado: si no, las cajas pesarían tanto que un
+     * acelerador que estropeara solo las puntuaciones pasaría la prueba.
+     */
+    fun sameRawDetections(reference: Any, candidate: Any, minCosine: Float = DENSE_MIN): Boolean {
+        if (!YoloPost.isRaw(reference) || !YoloPost.isRaw(candidate)) return false
+        val a = rowsOf(reference)
+        val b = rowsOf(candidate)
+        if (a.size != b.size) return false
+        return cosine(join(a, 0, 4), join(b, 0, 4)) >= minCosine && cosine(join(a, 4, a.size), join(b, 4, b.size)) >= minCosine
+    }
+
+    /** Lo mismo para YuNet ([1][N][16]): puntuaciones (cls, obj) por un lado y caja y puntos por otro. */
+    fun sameRawFaces(reference: Any, candidate: Any, minCosine: Float = DENSE_MIN): Boolean {
+        val a = rowsOf(reference)
+        val b = rowsOf(candidate)
+        if (a.isEmpty() || a.size != b.size || a[0].size != 16 || b[0].size != 16) return false
+        fun cols(r: List<FloatArray>, from: Int, to: Int) = FloatArray(r.size * (to - from)) { k -> r[k / (to - from)][from + k % (to - from)] }
+        return cosine(cols(a, 0, 2), cols(b, 0, 2)) >= minCosine && cosine(cols(a, 2, 16), cols(b, 2, 16)) >= minCosine
+    }
+
+    /** Similitud mínima de las comprobaciones de respaldo. */
+    const val DENSE_MIN = 0.98f
+
+    private fun rowsOf(value: Any): List<FloatArray> =
+        ((value as? Array<*>)?.firstOrNull() as? Array<*>)?.filterIsInstance<FloatArray>().orEmpty()
+
+    private fun join(rows: List<FloatArray>, from: Int, to: Int): FloatArray {
+        val n = rows.firstOrNull()?.size ?: 0
+        val out = FloatArray((to - from) * n)
+        for (r in from until to) rows[r].copyInto(out, (r - from) * n)
+        return out
+    }
+
     /** Salidas densas (mapas, vectores): misma "forma" según el coseno entre ambas. */
     fun similar(reference: Any, candidate: Any, minCosine: Float): Boolean {
         val a = flatten(reference)

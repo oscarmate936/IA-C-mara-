@@ -27,6 +27,7 @@ import com.iacamara.app.perception.onnx.SaliencyDetector
 import com.iacamara.app.perception.onnx.YoloDetector
 import com.iacamara.app.perception.onnx.YoloPost
 import com.iacamara.app.perception.onnx.YuNetDetector
+import com.iacamara.app.perception.onnx.assetSize
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -81,7 +82,7 @@ class PerceptionAnalyzer(
     @Volatile private var closedModels = false
 
     // MediaPipe
-    private val faceLandmarker = MpModel("ojos", acceleratorStore) { delegate ->
+    private val faceLandmarker = MpModel("ojos", LANDMARKS_MODEL, appContext, acceleratorStore) { delegate ->
         FaceLandmarker.createFromOptions(
             appContext,
             FaceLandmarker.FaceLandmarkerOptions.builder()
@@ -93,7 +94,7 @@ class PerceptionAnalyzer(
                 .build(),
         )
     }
-    private val poseLandmarker = MpModel("pose", acceleratorStore) { delegate ->
+    private val poseLandmarker = MpModel("pose", POSE_MODEL, appContext, acceleratorStore) { delegate ->
         PoseLandmarker.createFromOptions(
             appContext,
             PoseLandmarker.PoseLandmarkerOptions.builder()
@@ -223,12 +224,14 @@ class PerceptionAnalyzer(
             updateActive()
         }
         val explainDetections = { a: Any, b: Any -> OutputCheck.explainDetections(a, b) }
+        // Si no aparece nada claro que detectar (una calle vacía), se compara la salida entera de la red.
+        val rawDetections = { a: Any, b: Any -> OutputCheck.sameRawDetections(a, b) }
         val explainSimilarity = { a: Any, b: Any -> OutputCheck.explainSimilarity(a, b) }
         // Primero lo que más procesador gasta por segundo: YOLO26n (~4 veces por segundo) y las caras (casi
         // cada fotograma); luego la saliencia y YOLOE (lentos pero menos frecuentes).
         yoloModel?.let { model ->
             accelerator.optimize(
-                Accelerator.Job(model, detections, informative = hasDetections, explain = explainDetections) { backend, ms ->
+                Accelerator.Job(model, detections, informative = hasDetections, explain = explainDetections, fallback = rawDetections) { backend, ms ->
                     accelerated(yoloClock)(backend, ms)
                     if (backend != Backend.CPU) tryBiggerDetector(model)
                 },
@@ -238,7 +241,8 @@ class PerceptionAnalyzer(
             accelerator.optimize(
                 Accelerator.Job(
                     it, { a, b -> OutputCheck.sameFaces(a, b) }, informative = { out -> OutputCheck.hasFaces(out) },
-                    explain = { a, b -> OutputCheck.explainFaces(a, b) }, onDone = accelerated(faceClock),
+                    explain = { a, b -> OutputCheck.explainFaces(a, b) },
+                    fallback = { a, b -> OutputCheck.sameRawFaces(a, b) }, onDone = accelerated(faceClock),
                 ),
             )
         }
@@ -251,7 +255,12 @@ class PerceptionAnalyzer(
             )
         }
         yoloeModel?.let {
-            accelerator.optimize(Accelerator.Job(it, detections, informative = hasDetections, explain = explainDetections, onDone = accelerated(yoloeClock)))
+            accelerator.optimize(
+                Accelerator.Job(
+                    it, detections, informative = hasDetections, explain = explainDetections,
+                    fallback = rawDetections, onDone = accelerated(yoloeClock),
+                ),
+            )
         }
         aestheticModel?.let {
             accelerator.optimize(
@@ -287,6 +296,7 @@ class PerceptionAnalyzer(
                 model = big,
                 check = { a, b -> OutputCheck.sameDetections(a, b) },
                 informative = { out -> OutputCheck.hasDetections(out) },
+                fallback = { a, b -> OutputCheck.sameRawDetections(a, b) },
                 accept = { backend, ms, _ -> backend != Backend.CPU && ms <= 40f },
                 sampleFrom = small,
                 explain = { a, b -> OutputCheck.explainDetections(a, b) },
@@ -837,6 +847,8 @@ class PerceptionAnalyzer(
  */
 private class MpModel<T : AutoCloseable>(
     private val key: String,
+    private val asset: String,
+    private val context: Context,
     private val store: AcceleratorStore,
     private val factory: (Delegate) -> T,
 ) {
@@ -856,6 +868,8 @@ private class MpModel<T : AutoCloseable>(
     val label: String get() = if (onGpu) "GPU" else "CPU"
 
     fun load() {
+        // Otro modelo (p. ej. el cuerpo pasó de "lite" a "full"): lo que se sabía del anterior ya no vale.
+        store.ensureSignature(key, assetSize(context, asset).toString())
         if (store.chosen(key) == Backend.CPU) {
             // Ya se vio en este móvil que el procesador va mejor (o la GPU falla).
             model = factory(Delegate.CPU)

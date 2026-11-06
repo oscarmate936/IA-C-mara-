@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iacamara.app.diagnostics.DeviceDiagnostics
+import com.iacamara.app.perception.onnx.AcceleratorStore
 
 @Composable
 fun DiagnosticsScreen(onBack: () -> Unit) {
@@ -86,7 +87,13 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
             fontSize = 13.sp,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
-        Spacer(Modifier.padding(4.dp))
+        TextButton(
+            onClick = {
+                AcceleratorStore.get(context.applicationContext).resetAll()
+                Toast.makeText(context, "Se volverán a probar la próxima vez que abras la app", Toast.LENGTH_LONG).show()
+            },
+            modifier = Modifier.padding(horizontal = 8.dp),
+        ) { Text("Volver a probar los aceleradores (NPU/GPU)") }
         val text = report
         if (text == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

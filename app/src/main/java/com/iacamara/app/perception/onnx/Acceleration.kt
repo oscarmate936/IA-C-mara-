@@ -49,10 +49,26 @@ class AcceleratorStore private constructor(context: Context) {
     val cacheDir: File = File(context.noBackupFilesDir, "npu")
 
     init {
-        if (sp.getInt(KEY_VERSION, -1) != BuildConfig.VERSION_CODE) {
-            // Versión nueva: modelos o librerías nuevas, se vuelve a probar todo.
-            sp.edit().clear().putInt(KEY_VERSION, BuildConfig.VERSION_CODE).commit()
+        if (sp.getString(KEY_LIBS, null) != LIBS) {
+            // Librerías de IA (ONNX Runtime, QNN, MediaPipe) o forma de probar nuevas: se vuelve a probar todo.
+            sp.edit().clear().putString(KEY_LIBS, LIBS).putInt(KEY_VERSION, BuildConfig.VERSION_CODE).commit()
             cacheDir.deleteRecursively()
+        } else if (sp.getInt(KEY_VERSION, -1) != BuildConfig.VERSION_CODE) {
+            // Versión nueva de la app con las mismas librerías: lo que ya funcionaba en un acelerador se conserva
+            // (no hay que volver a probarlo, ni necesitar otra vez personas u objetos a la vista); lo que falló se
+            // vuelve a intentar. Si el archivo de un modelo cambió, eso lo detecta su firma (ensureSignature).
+            val all = sp.all
+            val accelerated = all.filter { (k, v) -> k.startsWith("elegido:") && v != Backend.CPU.name }
+                .keys.map { it.removePrefix("elegido:") }.toSet()
+            val edit = sp.edit()
+            for (k in all.keys) {
+                val model = k.split(':').getOrNull(1) ?: continue
+                val keep = model in accelerated && (k.startsWith("elegido:") || k.startsWith("ms:"))
+                if (!keep && (k.startsWith("elegido:") || k.startsWith("ms:") || k.startsWith("roto:") || k.startsWith("error:"))) {
+                    edit.remove(k)
+                }
+            }
+            edit.remove(KEY_DISABLED).remove(KEY_CRASHES).putInt(KEY_VERSION, BuildConfig.VERSION_CODE).commit()
         }
         cacheDir.mkdirs()
         // Marcas de pruebas que no terminaron en el proceso anterior: ese acelerador cerró la app.
@@ -75,6 +91,30 @@ class AcceleratorStore private constructor(context: Context) {
                 .putBoolean(KEY_DISABLED, crashes >= 2)
                 .commit()
         }
+    }
+
+    /**
+     * Si el archivo de un modelo cambió (una versión de la app con un modelo nuevo), se olvida lo que se sabía de
+     * él (acelerador elegido, fallos, tiempos y grafo compilado del NPU).
+     */
+    @Synchronized
+    fun ensureSignature(model: String, signature: String) {
+        val key = "firma:$model"
+        if (sp.getString(key, null) == signature) return
+        val edit = sp.edit()
+        sp.all.keys.filter { k ->
+            k == "elegido:$model" || k.startsWith("roto:$model:") || k.startsWith("error:$model:") || k.startsWith("ms:$model:")
+        }.forEach { edit.remove(it) }
+        edit.putString(key, signature).commit()
+        cacheDir.listFiles()?.filter { it.name.startsWith("${model}_") }?.forEach { it.delete() }
+    }
+
+    /** Volver a probar todos los aceleradores (Diagnóstico): se aplica la próxima vez que se abra la app. */
+    @Synchronized
+    fun resetAll() {
+        sp.edit().clear().putString(KEY_LIBS, LIBS).putInt(KEY_VERSION, BuildConfig.VERSION_CODE).commit()
+        cacheDir.deleteRecursively()
+        cacheDir.mkdirs()
     }
 
     /** La aceleración se desactivó por cierres inesperados. */
@@ -148,6 +188,14 @@ class AcceleratorStore private constructor(context: Context) {
 
     companion object {
         private const val KEY_VERSION = "version"
+        private const val KEY_LIBS = "librerias"
+
+        /**
+         * Librerías de IA y forma de probar: si cambian, todo se vuelve a probar. Subir [LOGIC] cuando cambie la
+         * comprobación de forma que lo validado antes ya no valga.
+         */
+        private const val LOGIC = 2
+        private val LIBS = "${BuildConfig.AI_LIBS} · prueba $LOGIC"
         private const val PROBE_PREFIX = "probando:"
         private const val KEY_ACTIVE = "activa"
         private const val KEY_CRASHES = "cierres"
@@ -287,6 +335,11 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
         val sampleFrom: OnnxModel = model,
         val explain: ((Any, Any) -> String)? = null,
         val skip: Set<Backend> = emptySet(),
+        /**
+         * Comprobación de respaldo con la salida entera de la red, para cuando no aparece ninguna imagen útil
+         * en un rato (un detector en una calle vacía, las caras sin nadie a la vista).
+         */
+        val fallback: ((Any, Any) -> Boolean)? = null,
         val onDone: (Backend, Float) -> Unit = { _, _ -> },
     )
 
@@ -326,6 +379,7 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
     /** @return true si hay que volver a intentarlo más tarde (aún no había una imagen útil). */
     private fun process(job: Job, finish: (Backend, Float) -> Unit): Boolean {
         val m = job.model
+        store.ensureSignature(m.key, m.signature)
         val remembered = store.chosen(m.key)
         if (remembered == Backend.CPU || closed) return false
         if (remembered != null && !store.isBroken(m.key, remembered)) {
@@ -361,7 +415,9 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
         if (closed) return false
 
         // Primera vez: una imagen real con la que se pueda comparar, y su referencia en el procesador.
-        val (sample, reference) = informativeSample(job) ?: return true
+        val first = informativeSample(job) ?: return true
+        val sample = first.sample
+        val reference = first.reference
         val cpuMs = measure { m.runSample(null, sample) }
         store.recordMs(m.key, Backend.CPU, cpuMs)
 
@@ -396,7 +452,7 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
                         if (backend == Backend.NPU) npuRuns = true
                         // Una sola imagen engaña (niebla, noche, detecciones justas): tiene que coincidir en la
                         // mayoría de 3 imágenes reales.
-                        val (passes, why) = agreementOf(job, s, reference, out)
+                        val (passes, why) = agreementOf(job, s, first, out)
                         check(passes >= 2) { "$MISMATCH ($passes de 3 imágenes)" + (why?.let { " · $it" } ?: "") }
                         s to measure { m.runSample(s, sample) }
                     } catch (e: Throwable) {
@@ -446,37 +502,53 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
      * la primera (ya ejecutada). Se para en cuanto la mayoría está decidida. También devuelve en qué
      * difería la última que no coincidió (para el diagnóstico).
      */
-    private fun agreementOf(job: Job, session: OrtSession, firstReference: Any, firstOutput: Any): Pair<Int, String?> {
+    private fun agreementOf(job: Job, session: OrtSession, first: Probe, firstOutput: Any): Pair<Int, String?> {
         var why: String? = null
+        val dense = first.dense
         fun compare(reference: Any, output: Any): Boolean {
-            val same = job.check(reference, output)
-            if (!same) why = runCatching { job.explain?.invoke(reference, output) }.getOrNull()
+            val same = if (dense) job.fallback?.invoke(reference, output) == true else job.check(reference, output)
+            if (!same) {
+                why = runCatching {
+                    if (dense) "salida completa: ${OutputCheck.explainSimilarity(reference, output)}" else job.explain?.invoke(reference, output)
+                }.getOrNull()
+            }
             return same
         }
-        var passes = if (compare(firstReference, firstOutput)) 1 else 0
+        var passes = if (compare(first.reference, firstOutput)) 1 else 0
         var tried = 1
         while (tried < 3 && passes < 2 && passes + (3 - tried) >= 2 && !closed) {
             job.sampleFrom.discardSample() // otra imagen distinta
-            val (sample, reference) = informativeSample(job) ?: throw NotEnoughImages()
-            if (compare(reference, job.model.runSample(session, sample))) passes++
+            val next = informativeSample(job, dense) ?: throw NotEnoughImages()
+            if (compare(next.reference, job.model.runSample(session, next.sample))) passes++
             tried++
         }
         return passes to why
     }
 
+    /** Una imagen de prueba, la salida del procesador con ella y si se compara la salida entera ([dense]). */
+    private class Probe(val sample: OnnxModel.Sample, val reference: Any, val dense: Boolean)
+
     /** Faltaron imágenes útiles para comparar (no dice nada del acelerador). */
     private class NotEnoughImages : Exception("no hubo imágenes suficientes para comparar")
 
-    /** Una imagen real cuya salida en el procesador sirve para comparar, con esa salida. */
-    private fun informativeSample(job: Job): Pair<OnnxModel.Sample, Any>? {
-        val deadline = SystemClock.elapsedRealtime() + INFORMATIVE_TIMEOUT_MS
-        while (!closed && SystemClock.elapsedRealtime() < deadline) {
-            val candidate = waitSample(job.sampleFrom) ?: return null
-            val out = job.model.runSample(null, candidate)
-            if (job.informative(out)) return candidate to out
-            job.sampleFrom.discardSample()
+    /**
+     * Una imagen real cuya salida en el procesador sirve para comparar, con esa salida. Si en un rato no aparece
+     * ninguna útil y el trabajo tiene comprobación de respaldo, vale cualquiera y se compara la salida entera
+     * de la red ([dense]: ya se está en ese modo).
+     */
+    private fun informativeSample(job: Job, dense: Boolean = false): Probe? {
+        if (!dense) {
+            val deadline = SystemClock.elapsedRealtime() + INFORMATIVE_TIMEOUT_MS
+            while (!closed && SystemClock.elapsedRealtime() < deadline) {
+                val candidate = waitSample(job.sampleFrom) ?: return null
+                val out = job.model.runSample(null, candidate)
+                if (job.informative(out)) return Probe(candidate, out, dense = false)
+                job.sampleFrom.discardSample()
+            }
+            if (job.fallback == null || closed) return null
         }
-        return null
+        val candidate = waitSample(job.sampleFrom) ?: return null
+        return Probe(candidate, job.model.runSample(null, candidate), dense = true)
     }
 
     private fun create(m: OnnxModel, backend: Backend): OrtSession {

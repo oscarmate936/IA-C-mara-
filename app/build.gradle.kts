@@ -20,6 +20,12 @@ android {
         targetSdk = 36
         versionCode = buildNumber
         versionName = "0.4.$buildNumber"
+        // Versiones de las librerías de IA: si cambian, la app vuelve a probar los aceleradores (NPU/GPU).
+        buildConfigField(
+            "String",
+            "AI_LIBS",
+            "\"onnxruntime-qnn ${libs.versions.onnxruntime.get()} · mediapipe ${libs.versions.mediapipe.get()}\"",
+        )
         ndk {
             // Solo procesadores de 64 bits (S22+ y Magic 8 Lite): APK más pequeño.
             abiFilters += listOf("arm64-v8a")

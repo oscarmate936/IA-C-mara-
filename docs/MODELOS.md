@@ -75,6 +75,15 @@ Notas:
   el cuerpo y la estética; crítico → solo caras, objetos, ojos y luz. El visor lo avisa («Móvil muy caliente: IA
   reducida»). Con calor se sigue probando el NPU (pasar un modelo al NPU es justo lo que enfría el móvil) pero no la
   GPU (se deja para el próximo arranque); en temperatura crítica las pruebas esperan.
+- **Lo validado se conserva entre versiones.** Al instalar una versión nueva, lo que ya funcionaba en el NPU o la
+  GPU se sigue usando sin volver a probarlo; solo se reintenta lo que falló. Un modelo se vuelve a probar entero si
+  cambia su archivo (firma por tamaño) y todos si cambian las librerías de IA (ONNX Runtime/QNN, MediaPipe) o la
+  forma de probar. En Diagnóstico, «Volver a probar los aceleradores» lo borra todo.
+- **Comprobación de respaldo.** Si en 25 s no aparece ninguna imagen útil (un detector en una calle vacía, las caras
+  sin nadie a la vista), se compara la salida entera de la red: para los YOLO, las cajas y las puntuaciones por
+  separado (si no, las cajas pesarían tanto que un acelerador que estropeara solo las puntuaciones pasaría); para
+  YuNet, las puntuaciones aparte de cajas y puntos. Similitud mínima 0,98; simulado en 16 bits: 0,9994 (YOLO26n) y
+  1,0000 (YuNet) en 40 imágenes.
 - **Orden y duración de las pruebas.** Primero lo que más procesador gasta por segundo (YOLO26n, ~4 veces por
   segundo, y las caras), luego la saliencia, YOLOE, la estética y CLIP. Si el NPU ya tarda menos del 30 % que el
   procesador, la GPU no se prueba (en el S22+ nunca ganó). Un modelo que no se está usando (p. ej. YOLOE con calor)
