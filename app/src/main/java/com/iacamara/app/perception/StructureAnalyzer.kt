@@ -99,6 +99,9 @@ object StructureAnalyzer {
     private const val DIAGONAL_MIN_DEG = 14f
     private const val DIAGONAL_MAX_DEG = 76f
 
+    /** Más abajo que esto (parte de la altura de la foto), un punto de fuga no lleva la mirada al fondo. */
+    private const val VP_MAX_Y = 0.8f
+
     /**
      * @param argb fotograma pequeño (≈160 px de lado mayor) con la escena derecha.
      * @param exclude zona del sujeto (normalizada) que no cuenta para la simetría.
@@ -182,7 +185,9 @@ object StructureAnalyzer {
             if (dAng > 90f) dAng = 180f - dAng
             if (dAng < 12f) continue
             val p = intersect(a, b) ?: continue
-            if (p.first < -0.15f * w || p.first > 1.15f * w || p.second < -0.15f * h || p.second > 1.15f * h) continue
+            // En la foto derecha, el punto de fuga de un camino o unas vías está en el horizonte o por encima: si
+            // las líneas se juntan abajo del todo (hacia quien hace la foto) no llevan la mirada al fondo.
+            if (p.first < -0.15f * w || p.first > 1.15f * w || p.second < -0.15f * h || p.second > VP_MAX_Y * h) continue
             val support = diagonals.filter { s ->
                 if (s.distanceToLine(p.first, p.second) > tol) return@filter false
                 // La línea debe ir hacia el punto, no cruzarlo por el medio.

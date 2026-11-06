@@ -68,6 +68,28 @@ class StructureAnalyzerTest {
     }
 
     @Test
+    fun lineasQueSeJuntanAbajoNoSonUnPuntoDeFuga() {
+        // Como en la calle de la captura: dos bordes que se juntan abajo a la derecha, hacia quien hace la foto.
+        val w = 120
+        val h = 160
+        val px = 0.85f * w
+        val py = 0.98f * h
+        val tex = texture(w, h, 4)
+        val img = IntArray(w * h) { i ->
+            val x = i % w + 0.5f
+            val y = i / w + 0.5f
+            when {
+                distToSegment(x, y, px, py, 0f, 0.55f * h) < 1.5f ||
+                    distToSegment(x, y, px, py, 0.6f * w, 0.5f * h) < 1.5f -> rgb(235)
+                else -> rgb((90 + tex[i]).toInt(), (90 + tex[i]).toInt(), (90 + tex[i]).toInt())
+            }
+        }
+        val r = StructureAnalyzer.analyze(img, w, h)
+        val vp = r.vanishingPoint
+        assertTrue("punto de fuga en $vp", vp == null || vp.second <= 0.8f)
+    }
+
+    @Test
     fun fachadaSimetrica() {
         val w = 120
         val h = 160

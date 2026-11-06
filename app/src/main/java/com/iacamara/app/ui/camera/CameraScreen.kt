@@ -60,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -615,11 +616,12 @@ fun CameraScreen(session: CameraSession, onOpenSettings: () -> Unit) {
             )
         }
 
-        // Visor 3:4 (formato completo del sensor).
+        // Visor 3:4 (formato completo del sensor). Nada se dibuja fuera de él (guías, puntos de fuga…).
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(3f / 4f)
+                .clipToBounds()
                 .onSizeChanged { viewSize = it },
         ) {
             AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
