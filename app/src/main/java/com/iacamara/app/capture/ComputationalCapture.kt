@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
+import android.graphics.ColorSpace
 import android.graphics.Matrix
 import android.graphics.Rect
 import android.net.Uri
@@ -80,7 +81,10 @@ class JpegFrameSource(private val jpeg: ByteArray) : FrameSource, AutoCloseable 
     override val height: Int = decoder.height
 
     override fun readRegion(x: Int, y: Int, w: Int, h: Int): IntArray {
-        val options = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            inPreferredColorSpace = SRGB
+        }
         val bitmap = synchronized(decoder) { decoder.decodeRegion(Rect(x, y, x + w, y + h), options) }
         val out = IntArray(w * h)
         bitmap.getPixels(out, 0, w, 0, 0, w, h)
@@ -104,6 +108,7 @@ class JpegFrameSource(private val jpeg: ByteArray) : FrameSource, AutoCloseable 
         val options = BitmapFactory.Options().apply {
             inSampleSize = scale
             inPreferredConfig = Bitmap.Config.ARGB_8888
+            inPreferredColorSpace = SRGB
         }
         return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, options)
     }
@@ -112,6 +117,12 @@ class JpegFrameSource(private val jpeg: ByteArray) : FrameSource, AutoCloseable 
         decoder.recycle()
     }
 }
+
+/**
+ * Todo se decodifica en sRGB: si la cámara guardara en Display P3 (gama amplia), los valores se
+ * convierten; si no, los colores de P3 se leerían como sRGB y la foto procesada saldría apagada.
+ */
+internal val SRGB: ColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
 
 /** Gira un bitmap para verlo derecho (para analizar caras en la foto reducida). */
 fun Bitmap.rotated(degrees: Int): Bitmap {

@@ -219,9 +219,18 @@ object AutoEnhance {
     // ---------------------------------------------------------------- estadísticas y curvas
 
     /**
-     * @param lnRG, lnBG media de ln(R/G) y ln(B/G) en los tonos medios: el color medio de la escena.
+     * @param lnRG, lnBG media de ln(R/G) y ln(B/G) de las superficies casi neutras (paredes, grises,
+     *   blancos): el color de la luz.
+     * @param neutral fracción de la foto que son esas superficies (si no hay, no se sabe el color de la luz).
      */
-    internal class Stats(val p01: Float, val p50: Float, val p995: Float, val lnRG: Float, val lnBG: Float) {
+    internal class Stats(
+        val p01: Float,
+        val p50: Float,
+        val p995: Float,
+        val lnRG: Float,
+        val lnBG: Float,
+        val neutral: Float = 1f,
+    ) {
         companion object {
             fun of(pixels: IntArray, width: Int, height: Int): Stats {
                 val hist = IntArray(256)
@@ -240,10 +249,11 @@ object AutoEnhance {
                         val b = p and 0xFF
                         val l = LumaPlane.luma(p)
                         hist[l]++
-                        // Para el color de la luz: tonos medios sin colores muy vivos.
+                        // Para el color de la luz: tonos medios casi neutros. Un color más intenso (la arena
+                        // y el cielo a la hora dorada, unas hojas de otoño) es la escena, no un defecto.
                         val mx = max(r, max(g, b))
                         val mn = min(r, min(g, b))
-                        if (l in 40..225 && mx - mn < 0.6f * mx) {
+                        if (l in 40..235 && mx - mn < NEUTRAL_SATURATION * mx) {
                             srg += ln((r + 1.0) / (g + 1.0))
                             sbg += ln((b + 1.0) / (g + 1.0))
                             n++
@@ -253,6 +263,7 @@ object AutoEnhance {
                     y += step
                 }
                 val total = hist.sum().coerceAtLeast(1)
+                val neutral = n / total.toFloat()
                 fun pct(q: Float): Float {
                     var acc = 0
                     val target = (total * q).toInt()
@@ -263,24 +274,28 @@ object AutoEnhance {
                     return 1f
                 }
                 val nn = max(1, n).toDouble()
-                return Stats(pct(0.01f), pct(0.5f), pct(0.995f), (srg / nn).toFloat(), (sbg / nn).toFloat())
+                return Stats(pct(0.01f), pct(0.5f), pct(0.995f), (srg / nn).toFloat(), (sbg / nn).toFloat(), neutral)
             }
         }
     }
 
     /**
-     * Ganancias de color (R, G, B) contra la dominante de la luz. Solo se corrige de verdad en el eje
-     * azul–ámbar (luz de día, sombra, bombilla…); en el eje verde–magenta apenas, porque ahí el color
-     * medio suele ser la propia escena (césped, hojas) y no la luz.
+     * Ganancias de color (R, G, B) contra la dominante de la luz. Solo se corrige en el eje azul–ámbar
+     * (luz de día, sombra, bombilla…), medido en las superficies casi neutras. El eje verde–magenta solo
+     * de noche: de día ese color suele ser la propia escena (césped, hojas apagadas) y no la luz.
      */
     internal fun whiteBalance(stats: Stats, recipe: Recipe, allowTint: Boolean = false): FloatArray {
         if (recipe.whiteBalance <= 0f) return floatArrayOf(1f, 1f, 1f)
-        val amber = (stats.lnRG - stats.lnBG) / 2f // > 0: luz cálida
-        val magenta = (stats.lnRG + stats.lnBG) / 2f // > 0: magenta, < 0: verde
-        // De noche un tono magenta o verde es un defecto del sensor, no la escena: se corrige más.
-        val tintLimit = if (allowTint) ln(1.12f) else ln(1.03f)
-        val fixAmber = -amber.coerceIn(-ln(1.12f), ln(1.12f)) * recipe.whiteBalance
-        val fixMagenta = -magenta.coerceIn(-tintLimit, tintLimit) * if (allowTint) 1f else recipe.whiteBalance
+        // Sin superficies neutras no hay con qué medir la luz: se corrige menos o nada.
+        val confidence = (stats.neutral / MIN_NEUTRAL).coerceIn(0f, 1f)
+        if (confidence <= 0f) return floatArrayOf(1f, 1f, 1f)
+        val amber = (stats.lnRG - stats.lnBG) / 2f * confidence // > 0: luz cálida
+        val magenta = (stats.lnRG + stats.lnBG) / 2f * confidence // > 0: magenta, < 0: verde
+        // Corrección prudente: una tierra parda o una arena al sol también parecen "luz cálida".
+        val amberLimit = if (allowTint) ln(1.12f) else ln(1.08f)
+        val fixAmber = -amber.coerceIn(-amberLimit, amberLimit) * recipe.whiteBalance
+        // De noche un tono magenta o verde es un defecto del sensor, no la escena: se corrige.
+        val fixMagenta = if (allowTint) -magenta.coerceIn(-ln(1.12f), ln(1.12f)) else 0f
         var gr = kotlin.math.exp(fixAmber + fixMagenta)
         var gb = kotlin.math.exp(-fixAmber + fixMagenta)
         var gg = 1f
@@ -345,34 +360,90 @@ object AutoEnhance {
         return argb((l + (r - l) * t).toInt(), (l + (g - l) * t).toInt(), (l + (b - l) * t).toInt())
     }
 
-    /** Suaviza el color (no la luz): quita las manchas de colores del ruido sin perder detalle. */
+    /**
+     * Suaviza el color (no la luz): quita las manchas de colores del ruido sin perder detalle.
+     * Con poca memoria (una foto de 12 MP no puede ocupar cinco copias en coma flotante): el color se
+     * guarda en enteros de 16 bits y se suaviza por franjas, con sumas acumuladas.
+     */
     internal fun chromaDenoise(pixels: IntArray, width: Int, height: Int, radius: Int) {
         val n = width * height
-        val cr = FloatArray(n)
-        val cb = FloatArray(n)
+        // Diferencias de color (R − Y, B − Y) en octavos de nivel.
+        val cr = ShortArray(n)
+        val cb = ShortArray(n)
         for (i in 0 until n) {
             val p = pixels[i]
             val r = (p shr 16) and 0xFF
             val g = (p shr 8) and 0xFF
             val b = p and 0xFF
             val l = 0.299f * r + 0.587f * g + 0.114f * b
-            cr[i] = r - l
-            cb[i] = b - l
+            cr[i] = ((r - l) * 8f).toInt().toShort()
+            cb[i] = ((b - l) * 8f).toInt().toShort()
         }
-        val sr = Fusion.boxBlur(cr, width, height, radius)
-        val sb = Fusion.boxBlur(cb, width, height, radius)
-        for (i in 0 until n) {
-            val p = pixels[i]
-            val r = (p shr 16) and 0xFF
-            val g = (p shr 8) and 0xFF
-            val b = p and 0xFF
-            val l = 0.299f * r + 0.587f * g + 0.114f * b
-            val nr = l + sr[i]
-            val nb = l + sb[i]
-            val ng = (l - 0.299f * nr - 0.114f * nb) / 0.587f
-            pixels[i] = argb(nr.toInt(), ng.toInt(), nb.toInt())
+        val stripe = 64
+        Parallel.forRange((height + stripe - 1) / stripe) { s ->
+            val y0 = s * stripe
+            val y1 = min(height, y0 + stripe)
+            val ry0 = max(0, y0 - radius)
+            val ry1 = min(height, y1 + radius)
+            val rows = ry1 - ry0
+            // Suma horizontal de cada fila de la franja (con margen), luego vertical.
+            val hr = FloatArray(rows * width)
+            val hb = FloatArray(rows * width)
+            for (yy in 0 until rows) {
+                val row = (ry0 + yy) * width
+                var accR = 0
+                var accB = 0
+                for (x in 0 until min(radius, width - 1) + 1) {
+                    accR += cr[row + x]
+                    accB += cb[row + x]
+                }
+                for (x in 0 until width) {
+                    val lo = x - radius
+                    val hi = x + radius
+                    val count = min(width - 1, hi) - max(0, lo) + 1
+                    hr[yy * width + x] = accR / count.toFloat()
+                    hb[yy * width + x] = accB / count.toFloat()
+                    if (hi + 1 < width) {
+                        accR += cr[row + hi + 1]
+                        accB += cb[row + hi + 1]
+                    }
+                    if (lo >= 0) {
+                        accR -= cr[row + lo]
+                        accB -= cb[row + lo]
+                    }
+                }
+            }
+            for (y in y0 until y1) {
+                val a = max(0, y - radius) - ry0
+                val z = min(height - 1, y + radius) - ry0
+                val count = (z - a + 1).toFloat()
+                for (x in 0 until width) {
+                    var sr = 0f
+                    var sb = 0f
+                    for (yy in a..z) {
+                        sr += hr[yy * width + x]
+                        sb += hb[yy * width + x]
+                    }
+                    val i = y * width + x
+                    val p = pixels[i]
+                    val r = (p shr 16) and 0xFF
+                    val g = (p shr 8) and 0xFF
+                    val b = p and 0xFF
+                    val l = 0.299f * r + 0.587f * g + 0.114f * b
+                    val nr = l + sr / count / 8f
+                    val nb = l + sb / count / 8f
+                    val ng = (l - 0.299f * nr - 0.114f * nb) / 0.587f
+                    pixels[i] = argb((nr + 0.5f).toInt(), (ng + 0.5f).toInt(), (nb + 0.5f).toInt())
+                }
+            }
         }
     }
 
     private const val BASE_SCALE = 4
+
+    /** Un píxel es "casi neutro" si la diferencia entre su canal mayor y menor es menor que esto (×mayor). */
+    private const val NEUTRAL_SATURATION = 0.35f
+
+    /** Fracción de superficies neutras a partir de la cual se confía del todo en el color de la luz. */
+    private const val MIN_NEUTRAL = 0.04f
 }

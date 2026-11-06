@@ -55,3 +55,22 @@ hay que desinstalar la versión anterior antes de instalar la nueva.
 2. Haz fotos con la cámara trasera y la frontal, con varios zooms y con los modos que aparezcan.
 3. Pulsa el icono ⓘ (arriba a la derecha) → **Copiar** y pega el informe de diagnóstico en el chat.
    Con ese informe se ajusta la IA a lo que permite cada móvil.
+
+## Color y fiabilidad: errores corregidos
+
+Cada caso tiene su prueba automática (`ColorFidelityTest`, `BurstFeaturesTest`) que simula lo que entrega la cámara.
+
+| Escenario | Qué pasaba | Ahora |
+|---|---|---|
+| Noche sin flash | Las sombras salían rosas (el negro del sensor trae algo de rojo y azul que al aclarar se multiplica) | Se mide ese tinte como lo que es, una cantidad que se **suma** a cada canal (extrapolando a luz cero), y se resta antes de aclarar |
+| Noche con farolas, hojas en sombra | El arreglo del rosa medía el color medio de las sombras y borraba también la luz naranja de las farolas o el verde de las hojas | El color de la escena **escala** con la luz y ya no se confunde con el tinte; solo se corrige en fotos oscuras |
+| Neones y luces de colores de noche | Al aclarar, el canal más alto se recortaba y el color viraba (naranja → amarillo) | El aclarado nunca pasa del máximo del canal más alto: mismo tono |
+| HDR con horizonte (cielo quemado) | La alineación "encajaba" igual moviendo la foto a los lados y elegía el desplazamiento más extremo: fantasmas o cielo quemado | A igualdad se elige el desplazamiento más pequeño |
+| HDR de atardecer | Contaba la foto normal aunque el rojo estuviera quemado: el cielo viraba a amarillo | Cada foto cuenta según su canal más alto; los colores que se salen se oscurecen un poco en vez de cambiar de tono |
+| Mejora automática a la hora dorada | Enfriaba la luz cálida de verdad (playa, arena al sol) | El color de la luz se mide solo en superficies casi neutras, con corrección más prudente |
+| Zoom con detalle de día | Quitaba el verde a las hojas en sombra | Sin corrección de negros en fotos de día |
+| Todos con los ojos abiertos | Si la otra foto de la ráfaga salía más clara, la cara pegada se notaba | Se igualan la luz y el color de la cara con los de la foto |
+| Ráfagas con flash AUTO | Unas fotos con flash y otras sin él, y un preflash por foto | Durante la ráfaga no hay flash (el modo noche lo sustituye) |
+| Girar el móvil durante una ráfaga | Fotos con distinta orientación que no encajaban | La orientación se fija hasta que termina la ráfaga |
+| Falta de memoria (sensores de muchos MP) | Si la fusión fallaba se perdía la foto; la mejora y la fusión podían ir a la vez | Se guarda la foto normal y se avisa; un solo trabajo pesado a la vez y el ruido de color usa 5 veces menos memoria |
+| Móviles que guardan en Display P3 | Las copias procesadas saldrían apagadas | Todo se decodifica en sRGB |

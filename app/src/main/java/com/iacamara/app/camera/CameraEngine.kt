@@ -66,6 +66,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -174,6 +176,7 @@ class CameraEngine(private val context: Context) {
     private var lifecycleOwner: LifecycleOwner? = null
     private var surfaceProvider: Preview.SurfaceProvider? = null
     private var targetRotation: Int = Surface.ROTATION_0
+    @Volatile private var burstRotationLocked = false
     private var targetZoom: Float = 1f
 
     /** Lecturas del sensor (ISO, exposición, enfoque) del visor, para la IA. */
@@ -196,6 +199,12 @@ class CameraEngine(private val context: Context) {
     val enhancer = PhotoEnhancer(context)
     private val prefs = AppPrefs(context)
     private val enhanceDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+
+    /**
+     * Un solo trabajo a resolución completa a la vez (fusión de una ráfaga o mejora automática): cada
+     * uno ocupa varias copias de la foto en memoria y, juntos, en un sensor de muchos megapíxeles no caben.
+     */
+    private val heavyWork = Mutex()
 
     /** Se debe llamar antes de start(). */
     fun setAnalyzer(analyzer: ImageAnalysis.Analyzer?) {
@@ -447,8 +456,10 @@ class CameraEngine(private val context: Context) {
         _state.update { it.copy(enhancing = it.enhancing + 1) }
         scope.launch {
             try {
-                val improved = withContext(enhanceDispatcher) {
-                    runCatching { enhancer.enhance(original, shot, alreadyProcessed, geometry) }.getOrNull()
+                val improved = heavyWork.withLock {
+                    withContext(enhanceDispatcher) {
+                        runCatching { enhancer.enhance(original, shot, alreadyProcessed, geometry) }.getOrNull()
+                    }
                 }
                 if (improved != null) {
                     if (choice == EnhanceMode.SOLO_MEJORADA) withContext(Dispatchers.IO) { PhotoSaver.delete(context, original) }
@@ -464,42 +475,36 @@ class CameraEngine(private val context: Context) {
         val mode = _state.value.mode
         val capture = imageCapture ?: return
         _state.update { it.copy(capturing = true, processing = Processing(plan.description, 0f, capturingFrames = true)) }
+        burstRotationLocked = true
+        val frames = mutableListOf<CapturedFrame>()
         try {
-            val frames = mutableListOf<CapturedFrame>()
             var evs = FloatArray(0)
-            when (plan.strategy) {
-                CaptureStrategy.HDR -> {
-                    val bracket = captureBracket(capture)
-                    bracket.forEach { frames += it.first }
-                    evs = FloatArray(bracket.size) { bracket[it].second }
+            // Durante la ráfaga, sin flash (unas fotos saldrían con flash y otras sin él, y cada destello
+            // añade un segundo de preflash: el modo noche sustituye al flash) y con la orientación fija
+            // (si el móvil gira a mitad, las fotos no encajarían entre sí).
+            val flashMode = capture.flashMode
+            capture.flashMode = ImageCapture.FLASH_MODE_OFF
+            try {
+                when (plan.strategy) {
+                    CaptureStrategy.HDR -> {
+                        val bracket = captureBracket(capture)
+                        bracket.forEach { frames += it.first }
+                        evs = FloatArray(bracket.size) { bracket[it].second }
+                    }
+                    else -> repeat(plan.frames) {
+                        if (it > 0 && plan.intervalMs > 0) delay(plan.intervalMs)
+                        frames += capture.captureJpeg(mainExecutor)
+                        updateProgress((it + 1f) / plan.frames * 0.3f, capturingFrames = true)
+                    }
                 }
-                else -> repeat(plan.frames) {
-                    if (it > 0 && plan.intervalMs > 0) delay(plan.intervalMs)
-                    frames += capture.captureJpeg(mainExecutor)
-                    updateProgress((it + 1f) / plan.frames * 0.3f, capturingFrames = true)
-                }
+            } finally {
+                capture.flashMode = flashMode
+                burstRotationLocked = false
+                capture.targetRotation = targetRotation
             }
             updateProgress(0.3f, capturingFrames = false)
-            val uri = withContext(Dispatchers.Default) {
-                when (plan.strategy) {
-                    CaptureStrategy.BEST_OF_BURST -> saveBest(frames)
-                    CaptureStrategy.NIGHT -> mergeAndSave(frames, plan.description) { sources, report ->
-                        BurstPipeline.night(sources, report)
-                    }
-                    CaptureStrategy.HDR -> mergeAndSave(frames, plan.description) { sources, report ->
-                        BurstPipeline.hdr(sources, evs, report)
-                    }
-                    CaptureStrategy.REMOVE_MOVING -> mergeAndSave(frames, plan.description) { sources, report ->
-                        BurstPipeline.removeMoving(sources, report)
-                    }
-                    CaptureStrategy.LONG_EXPOSURE -> mergeAndSave(frames, plan.description) { sources, report ->
-                        BurstPipeline.longExposure(sources, plan.lighten, report)
-                    }
-                    CaptureStrategy.ZOOM_DETAIL -> mergeAndSave(frames, plan.description) { sources, report ->
-                        BurstPipeline.zoomDetail(sources, report)
-                    }
-                    CaptureStrategy.SINGLE -> null
-                }
+            val uri = heavyWork.withLock {
+                withContext(Dispatchers.Default) { merge(plan, frames, evs) }
             }
             _state.update { it.copy(capturing = false, processing = null, lastPhotoUri = uri ?: it.lastPhotoUri) }
             if (uri != null) {
@@ -508,8 +513,43 @@ class CameraEngine(private val context: Context) {
             }
         } catch (e: Throwable) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            _state.update { it.copy(capturing = false, processing = null, message = "No se pudo procesar la foto: ${e.message}") }
+            // Si falla el procesado (p. ej. falta memoria con un sensor de muchos megapíxeles), la foto no se
+            // pierde: se guarda la normal de la ráfaga (en HDR, la de exposición central).
+            val fallback = frames.getOrNull(if (plan.strategy == CaptureStrategy.HDR) frames.size / 2 else 0)
+            val saved = fallback?.let { f ->
+                runCatching { withContext(Dispatchers.IO) { PhotoSaver.saveJpeg(context, f.jpeg, f.rotationDegrees) } }.getOrNull()
+            }
+            val why = e.message ?: e.javaClass.simpleName
+            _state.update {
+                it.copy(
+                    capturing = false,
+                    processing = null,
+                    lastPhotoUri = saved ?: it.lastPhotoUri,
+                    message = if (saved != null) "No se pudo procesar ($why): se guardó la foto normal" else "No se pudo procesar la foto: $why",
+                )
+            }
         }
+    }
+
+    /** Fusiona la ráfaga con la técnica elegida y guarda el resultado. */
+    private fun merge(plan: CapturePlan, frames: List<CapturedFrame>, evs: FloatArray): Uri? = when (plan.strategy) {
+        CaptureStrategy.BEST_OF_BURST -> saveBest(frames)
+        CaptureStrategy.NIGHT -> mergeAndSave(frames, plan.description) { sources, report ->
+            BurstPipeline.night(sources, report)
+        }
+        CaptureStrategy.HDR -> mergeAndSave(frames, plan.description) { sources, report ->
+            BurstPipeline.hdr(sources, evs, report)
+        }
+        CaptureStrategy.REMOVE_MOVING -> mergeAndSave(frames, plan.description) { sources, report ->
+            BurstPipeline.removeMoving(sources, report)
+        }
+        CaptureStrategy.LONG_EXPOSURE -> mergeAndSave(frames, plan.description) { sources, report ->
+            BurstPipeline.longExposure(sources, plan.lighten, report)
+        }
+        CaptureStrategy.ZOOM_DETAIL -> mergeAndSave(frames, plan.description) { sources, report ->
+            BurstPipeline.zoomDetail(sources, report)
+        }
+        CaptureStrategy.SINGLE -> null
     }
 
     private fun updateProgress(progress: Float, capturingFrames: Boolean) {
@@ -763,7 +803,8 @@ class CameraEngine(private val context: Context) {
 
     fun setTargetRotation(rotation: Int) {
         targetRotation = rotation
-        imageCapture?.targetRotation = rotation
+        // A mitad de una ráfaga se aplica al terminarla.
+        if (!burstRotationLocked) imageCapture?.targetRotation = rotation
     }
 
     fun clearMessage() = _state.update { it.copy(message = null) }

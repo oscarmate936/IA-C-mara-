@@ -55,7 +55,10 @@ class PhotoEnhancer(private val context: Context) {
             ?: ExifInterface.ORIENTATION_NORMAL
         val focal35 = exif?.getAttributeInt(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, 0)?.takeIf { it > 0 }
 
-        val options = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            inPreferredColorSpace = SRGB
+        }
         val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: return null
         val upright = orient(decoded, orientation)
         val w = upright.width

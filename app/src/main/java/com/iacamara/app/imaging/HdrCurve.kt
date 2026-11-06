@@ -31,16 +31,45 @@ class HdrCurve(val pre: Float, val white: Float, val shadowGamma: Float) {
         return lut[idx] + (lut[idx + 1] - lut[idx]) * frac
     }
 
-    /** Píxel en luz lineal → ARGB, conservando el color (se escala por la luminancia). */
+    /**
+     * Píxel en luz lineal → ARGB, conservando el color (se escala por la luminancia). Si al aclarar un
+     * color intenso un canal pasa del máximo (un cielo azul profundo, el naranja de un atardecer), en vez
+     * de recortar ese canal (cambiaría el tono) se acerca el color al gris de su misma luminancia.
+     */
     fun apply(r: Float, g: Float, b: Float): Int {
         val l = 0.2126f * r + 0.7152f * g + 0.0722f * b
         if (l <= 1e-6f) return argb(0, 0, 0)
-        val k = tone(l) / l
-        return argb(toSrgb(r * k), toSrgb(g * k), toSrgb(b * k))
+        val y = tone(l)
+        val k = y / l
+        var rr = r * k
+        var gg = g * k
+        var bb = b * k
+        var top = max(rr, max(gg, bb))
+        var yy = y
+        if (top > 1f) {
+            // Primero se oscurece un poco el color (conserva tono y saturación exactos)…
+            val s = top.pow(-OVERFLOW_DARKEN)
+            rr *= s
+            gg *= s
+            bb *= s
+            yy *= s
+            top *= s
+        }
+        if (top > 1f) {
+            // …y lo que aún sobre, hacia el gris de su luminancia.
+            val t = if (yy >= 1f) 0f else ((1f - yy) / (top - yy)).coerceIn(0f, 1f)
+            rr = yy + (rr - yy) * t
+            gg = yy + (gg - yy) * t
+            bb = yy + (bb - yy) * t
+        }
+        return argb(toSrgb(rr), toSrgb(gg), toSrgb(bb))
     }
 
     companion object {
         private const val LUT_SIZE = 4096
+
+        /** Parte del exceso de un color intenso que se resuelve oscureciéndolo (el resto, desaturando). */
+        private const val OVERFLOW_DARKEN = 0.8f
         private const val LUT_RANGE = 16f
 
         /** sRGB (0–255) → luz lineal. */
@@ -50,6 +79,22 @@ class HdrCurve(val pre: Float, val white: Float, val shadowGamma: Float) {
         val VALID = FloatArray(256) {
             val x = it / 255f
             min((x - 0.03f) / 0.1f, (0.95f - x) / 0.1f).coerceIn(0f, 1f)
+        }
+
+        private val LOW = FloatArray(256) { ((it / 255f - 0.03f) / 0.1f).coerceIn(0f, 1f) }
+        private val HIGH = FloatArray(256) { ((0.95f - it / 255f) / 0.1f).coerceIn(0f, 1f) }
+
+        /**
+         * Confianza de un píxel para la fusión HDR. Por abajo manda la luminancia (ruido); por arriba, el
+         * canal más alto: en un cielo naranja el rojo se quema antes que la luminancia, y si esa foto
+         * contara, el cielo viraría a amarillo. La foto más oscura siempre cuenta algo en las luces y la
+         * más clara en las sombras, para que nunca se quede un píxel sin ninguna foto.
+         */
+        fun weight(argb: Int, darkest: Boolean, brightest: Boolean): Float {
+            val top = max((argb shr 16) and 0xFF, max((argb shr 8) and 0xFF, argb and 0xFF))
+            val low = if (brightest) max(LOW[LumaPlane.luma(argb)], 0.02f) else LOW[LumaPlane.luma(argb)]
+            val high = if (darkest) max(HIGH[top], 0.02f) else HIGH[top]
+            return min(low, high)
         }
 
         private val TO_SRGB = IntArray(LUT_SIZE + 1) { (255f * (it / LUT_SIZE.toFloat()).pow(1f / 2.2f) + 0.5f).toInt() }

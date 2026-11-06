@@ -98,8 +98,10 @@ object Aligner {
                         for (sx in gx - search..gx + search) {
                             val cost = cost(reference, image, x0, y0, x1, y1, sx, sy, 2, mode, refMed, imgMed)
                             costs[(sy - gy + search) * size + (sx - gx + search)] = cost
-                            if (cost < best) {
-                                best = cost
+                            // A igualdad, el más cercano al desplazamiento global.
+                            val c = penalized(cost, abs(sx - gx) + abs(sy - gy), 2 * search)
+                            if (c < best) {
+                                best = c
                                 bx = sx
                                 by = sy
                             }
@@ -137,13 +139,16 @@ object Aligner {
             val refMed = ref.median()
             val imgMed = img.median()
             val radius = if (level == levels - 1) max(2, (maxShift shr level) + 1) else 1
+            val reach = 2 * max(1, maxShift shr level)
             var best = Float.MAX_VALUE
             var bx = dx
             var by = dy
             val step = if (ref.width * ref.height > 200_000) 2 else 1
             for (sy in dy - radius..dy + radius) {
                 for (sx in dx - radius..dx + radius) {
-                    val c = cost(ref, img, 0, 0, ref.width, ref.height, sx, sy, step, mode, refMed, imgMed)
+                    // Si varios desplazamientos encajan igual (un horizonte: moverlo a los lados no cambia
+                    // nada), se prefiere el más pequeño, no el primero que se probó (el más extremo).
+                    val c = penalized(cost(ref, img, 0, 0, ref.width, ref.height, sx, sy, step, mode, refMed, imgMed), abs(sx) + abs(sy), reach)
                     if (c < best) {
                         best = c
                         bx = sx
@@ -159,6 +164,12 @@ object Aligner {
             }
         }
         return dx to dy
+    }
+
+    /** Coste algo mayor cuanto mayor es el desplazamiento (hasta un 10 % en el extremo de la búsqueda). */
+    private fun penalized(cost: Float, distance: Int, reach: Int): Float {
+        if (cost == Float.MAX_VALUE) return cost
+        return (cost + 1e-4f) * (1f + 0.1f * distance / max(1, reach))
     }
 
     private fun pyramid(base: LumaPlane): List<LumaPlane> {

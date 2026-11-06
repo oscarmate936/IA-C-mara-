@@ -14,7 +14,8 @@ data class PixelRect(val left: Int, val top: Int, val right: Int, val bottom: In
 /**
  * "Todos con los ojos abiertos": en una foto de grupo, la cara de quien parpadeó se sustituye por la
  * misma cara de otra foto de la ráfaga en la que tenía los ojos abiertos. La cara se alinea con la de
- * la foto base (el móvil y la persona se mueven un poco entre fotos) y se funde con bordes suaves.
+ * la foto base (el móvil y la persona se mueven un poco entre fotos), se iguala su luz y su color con
+ * los de la base (entre dos fotos de una ráfaga la exposición puede cambiar) y se funde con bordes suaves.
  */
 object FaceMerge {
 
@@ -43,6 +44,7 @@ object FaceMerge {
         val cy = (r.top + r.bottom) / 2f
         val rx = r.width / 2f
         val ry = r.height / 2f
+        val gain = matchGain(base, w, r, donorPx, dw, dh, sx - dx0, sy - dy0, cx, cy, rx, ry)
         for (y in r.top until r.bottom) {
             for (x in r.left until r.right) {
                 val nx = (x + 0.5f - cx) / rx
@@ -57,7 +59,7 @@ object FaceMerge {
                 if (ox < 0 || oy < 0 || ox >= dw || oy >= dh) continue
                 val a = base[y * w + x]
                 val b = donorPx[oy * dw + ox]
-                base[y * w + x] = blend(a, b, wgt)
+                base[y * w + x] = blend(a, scaled(b, gain), wgt)
             }
         }
         return sx to sy
@@ -122,6 +124,47 @@ object FaceMerge {
         }
         return bx to by
     }
+
+    /**
+     * Ganancia por canal que iguala la donante con la base, medida en el anillo exterior de la elipse
+     * (pelo, fondo, borde de la cara: lo que es igual en las dos fotos; los ojos quedan fuera).
+     */
+    private fun matchGain(
+        base: IntArray, w: Int, r: PixelRect, donor: IntArray, dw: Int, dh: Int,
+        ox0: Int, oy0: Int, cx: Float, cy: Float, rx: Float, ry: Float,
+    ): FloatArray {
+        val sb = DoubleArray(3)
+        val sd = DoubleArray(3)
+        var n = 0
+        for (y in r.top until r.bottom) {
+            for (x in r.left until r.right) {
+                val nx = (x + 0.5f - cx) / rx
+                val ny = (y + 0.5f - cy) / ry
+                val d = nx * nx + ny * ny
+                if (d < 0.5f || d >= 1f) continue
+                val ox = x + ox0
+                val oy = y + oy0
+                if (ox < 0 || oy < 0 || ox >= dw || oy >= dh) continue
+                val a = base[y * w + x]
+                val b = donor[oy * dw + ox]
+                for (c in 0 until 3) {
+                    val shift = 16 - 8 * c
+                    sb[c] += (a shr shift) and 0xFF
+                    sd[c] += (b shr shift) and 0xFF
+                }
+                n++
+            }
+        }
+        if (n < 20) return floatArrayOf(1f, 1f, 1f)
+        return FloatArray(3) { c -> if (sd[c] < n) 1f else (sb[c] / sd[c]).toFloat().coerceIn(0.75f, 1.33f) }
+    }
+
+    private fun scaled(p: Int, gain: FloatArray): Int =
+        argb(
+            (((p shr 16) and 0xFF) * gain[0] + 0.5f).toInt(),
+            (((p shr 8) and 0xFF) * gain[1] + 0.5f).toInt(),
+            ((p and 0xFF) * gain[2] + 0.5f).toInt(),
+        )
 
     private fun blend(a: Int, b: Int, t: Float): Int {
         fun ch(shift: Int) = (((a shr shift) and 0xFF) * (1f - t) + ((b shr shift) and 0xFF) * t + 0.5f).toInt()

@@ -259,6 +259,8 @@ object Fusion {
         val stripes = (h + STRIPE - 1) / STRIPE
         val done = AtomicInteger()
         val gains = FloatArray(evs.size) { 2f.pow(evs[reference] - evs[it]) }
+        val darkest = evs.indices.minByOrNull { evs[it] } ?: reference
+        val brightest = evs.indices.maxByOrNull { evs[it] } ?: reference
         Parallel.forRange(stripes) { s ->
             val y0 = s * STRIPE
             val y1 = min(h, y0 + STRIPE)
@@ -298,7 +300,7 @@ object Fusion {
                             if (sx < 0f || sy < 0f || sx > w - 1f || sy > srcRows - 1f) continue
                             bilinear(src, w, srcRows, sx, sy)
                         }
-                        var weight = HdrCurve.VALID[LumaPlane.luma(sample)] * preference
+                        var weight = HdrCurve.weight(sample, k == darkest, k == brightest) * preference
                         if (weight <= 0f) continue
                         if (src != null && isGhost(refPixel, sample, 1f / gain)) weight = 0f
                         lr[i] += weight * HdrCurve.TO_LINEAR[(sample shr 16) and 0xFF] * gain
@@ -409,17 +411,18 @@ object ToneCurve {
      * deja promediar varias fotos. Solo realza el detalle que hay, sin crear ruido en zonas lisas.
      */
     fun sharpen(pixels: IntArray, width: Int, height: Int, amount: Float = 0.45f, threshold: Int = 3) {
-        val luma = IntArray(pixels.size) { LumaPlane.luma(pixels[it]) }
+        val lumaBytes = ByteArray(pixels.size) { LumaPlane.luma(pixels[it]).toByte() }
         val rowsPerTask = 128
         val tasks = (height + rowsPerTask - 1) / rowsPerTask
         Parallel.forRange(tasks) { t ->
             val y0 = max(1, t * rowsPerTask)
             val y1 = min(height - 1, (t + 1) * rowsPerTask)
+            fun luma(i: Int) = lumaBytes[i].toInt() and 0xFF
             for (y in y0 until y1) {
                 for (x in 1 until width - 1) {
                     val i = y * width + x
-                    val blur = (luma[i] * 4 + luma[i - 1] + luma[i + 1] + luma[i - width] + luma[i + width]) / 8
-                    val detail = luma[i] - blur
+                    val blur = (luma(i) * 4 + luma(i - 1) + luma(i + 1) + luma(i - width) + luma(i + width)) / 8
+                    val detail = luma(i) - blur
                     if (kotlin.math.abs(detail) <= threshold) continue
                     val add = (detail * amount).toInt()
                     val p = pixels[i]
@@ -432,39 +435,65 @@ object ToneCurve {
     /**
      * Neutraliza el color de los negros. En la oscuridad el sensor deja los negros con un pequeño exceso
      * de rojo y azul (o de verde); al aclarar la foto ese exceso se multiplica y la foto sale rosa.
-     * Se mide el color medio de las zonas oscuras y se resta su desviación respecto al gris, con toda
-     * su fuerza en los negros y desapareciendo hacia los tonos medios (las luces no se tocan).
+     *
+     * Ese exceso es una cantidad que se **suma** a cada canal, mientras que el color de la escena (la luz
+     * naranja de una farola, unas hojas verdes en sombra) **escala** con la luz. Por eso no se mide el
+     * color medio de las sombras (eso borraría la luz cálida o el verde de las hojas), sino lo que vale
+     * cada canal al extrapolar a luz cero: una recta canal = a·luminancia + o en las zonas oscuras. Las
+     * diferencias entre las `o` de los tres canales son el tinte del sensor, y eso es lo que se resta:
+     * entero en las sombras y desapareciendo hacia las luces (que no se tocan).
+     *
+     * Solo en fotos oscuras (al menos la mitad de la imagen en sombra): de día el procesador de la
+     * cámara ya deja bien los negros, y en una escena compleja (ropa oscura de un color, árboles de otro)
+     * la recta confundiría los colores de las cosas con un tinte.
      *
      * @return la corrección aplicada a (R, G, B) en los negros, para pruebas y diagnóstico.
      */
-    fun neutralizeBlacks(pixels: IntArray, maxOffset: Int = 30): IntArray {
-        var sr = 0L
-        var sg = 0L
-        var sb = 0L
+    fun neutralizeBlacks(pixels: IntArray, maxOffset: Int = 24): IntArray {
         var n = 0
+        var sampled = 0
+        var shadows = 0
+        var sl = 0.0
+        var sll = 0.0
+        val sc = DoubleArray(3)
+        val scl = DoubleArray(3)
         for (i in pixels.indices step 3) {
             val p = pixels[i]
             val l = LumaPlane.luma(p)
-            if (l in 2..45) {
-                sr += (p shr 16) and 0xFF
-                sg += (p shr 8) and 0xFF
-                sb += p and 0xFF
+            sampled++
+            if (l < 70) shadows++
+            // Por debajo de ~8 el ruido se recorta a cero en cada foto y falsea la medida.
+            if (l in 8..70) {
+                val c0 = (p shr 16) and 0xFF
+                val c1 = (p shr 8) and 0xFF
+                val c2 = p and 0xFF
                 n++
+                sl += l
+                sll += l.toDouble() * l
+                sc[0] += c0
+                sc[1] += c1
+                sc[2] += c2
+                scl[0] += c0.toDouble() * l
+                scl[1] += c1.toDouble() * l
+                scl[2] += c2.toDouble() * l
             }
         }
-        // Con muy pocas zonas oscuras no hay nada fiable que medir.
-        if (n < pixels.size / 3 / 50) return intArrayOf(0, 0, 0)
-        val mr = sr / n.toFloat()
-        val mg = sg / n.toFloat()
-        val mb = sb / n.toFloat()
-        val gray = minOf(mr, mg, mb)
-        val off = intArrayOf(
-            (mr - gray).toInt().coerceIn(0, maxOffset),
-            (mg - gray).toInt().coerceIn(0, maxOffset),
-            (mb - gray).toInt().coerceIn(0, maxOffset),
-        )
+        // Foto de día, o muy pocas zonas oscuras: no hay nada que corregir o nada fiable que medir.
+        if (shadows < sampled / 2 || n < pixels.size / 3 / 50) return intArrayOf(0, 0, 0)
+        val ml = sl / n
+        val varL = sll / n - ml * ml
+        // Todas las sombras con el mismo brillo: no se puede separar el tinte del color de la escena.
+        if (varL < 16.0) return intArrayOf(0, 0, 0)
+        val intercept = DoubleArray(3) { c ->
+            val mc = sc[c] / n
+            val slope = (scl[c] / n - mc * ml) / varL
+            mc - slope * ml
+        }
+        val base = intercept.min()
+        val off = IntArray(3) { c -> (intercept[c] - base + 0.5).toInt().coerceIn(0, maxOffset) }
         if (off.all { it <= 1 }) return intArrayOf(0, 0, 0)
-        val fade = FloatArray(256) { l -> (1f - l / 140f).coerceIn(0f, 1f) }
+        // El tinte es una cantidad fija: se quita entero en las sombras y desaparece hacia las luces.
+        val fade = FloatArray(256) { l -> (1f - (l - 40) / 120f).coerceIn(0f, 1f) }
         for (i in pixels.indices) {
             val p = pixels[i]
             val f = fade[LumaPlane.luma(p)]
@@ -481,7 +510,8 @@ object ToneCurve {
     /**
      * Aclara una foto oscura (modo noche) con una curva gamma calculada para llevar el brillo medio a
      * `targetMean`, sin quemar las luces (la curva deja el blanco en blanco). Respeta el color: escala los
-     * tres canales por igual.
+     * tres canales por igual, y en los colores intensos (un neón, un semáforo) nunca más de lo que cabe
+     * en el canal más alto: si uno se recortara, el color cambiaría de tono (el naranja vira a amarillo).
      */
     fun autoBrighten(pixels: IntArray, targetMean: Float = 0.30f, minGamma: Float = 0.55f) {
         var sum = 0L
@@ -498,12 +528,13 @@ object ToneCurve {
         }
         for (i in pixels.indices) {
             val p = pixels[i]
-            val g = gain[LumaPlane.luma(p)]
-            pixels[i] = argb(
-                (((p shr 16) and 0xFF) * g + 0.5f).toInt(),
-                (((p shr 8) and 0xFF) * g + 0.5f).toInt(),
-                ((p and 0xFF) * g + 0.5f).toInt(),
-            )
+            val r = (p shr 16) and 0xFF
+            val gr = (p shr 8) and 0xFF
+            val b = p and 0xFF
+            var g = gain[LumaPlane.luma(p)]
+            val top = max(r, max(gr, b))
+            if (top * g > 255f) g = max(1f, 255f / top)
+            pixels[i] = argb((r * g + 0.5f).toInt(), (gr * g + 0.5f).toInt(), (b * g + 0.5f).toInt())
         }
     }
 }

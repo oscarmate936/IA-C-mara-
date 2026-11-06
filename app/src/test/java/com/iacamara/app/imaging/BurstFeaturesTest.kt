@@ -77,29 +77,41 @@ class BurstFeaturesTest {
     @Test
     fun elModoNocheNoSaleRosa() {
         // Fotos de noche como las de la cámara: muy oscuras, con ruido y negros con exceso de rojo y azul.
+        // Se compara con la misma escena sin ese defecto del sensor: las sombras tienen que quedar igual
+        // (la escena es algo cálida y eso debe conservarse; el rosa, no).
         val bg = background(13)
-        val r = Random(21)
-        val frames = (0 until 6).map { k ->
-            val moved = shifted(bg, k % 2, k % 3 - 1)
-            val px = IntArray(w * h) { i ->
-                val p = moved[i]
-                fun dark(v: Int, offset: Int) = (v * 0.12 + offset + r.nextGaussian() * 4).toInt()
-                argb(dark((p shr 16) and 0xFF, 9), dark((p shr 8) and 0xFF, 0), dark(p and 0xFF, 8))
+        fun shoot(sensorTint: Boolean): IntArray {
+            val r = Random(21)
+            val frames = (0 until 6).map { k ->
+                val moved = shifted(bg, k % 2, k % 3 - 1)
+                val px = IntArray(w * h) { i ->
+                    val p = moved[i]
+                    fun dark(v: Int, offset: Int) = (v * 0.12 + (if (sensorTint) offset else 0) + r.nextGaussian() * 4).toInt()
+                    argb(dark((p shr 16) and 0xFF, 9), dark((p shr 8) and 0xFF, 0), dark(p and 0xFF, 8))
+                }
+                ArrayFrameSource(w, h, px)
             }
-            ArrayFrameSource(w, h, px)
+            return BurstPipeline.night(frames).pixels
         }
-        val night = BurstPipeline.night(frames)
-        var rg = 0.0
-        var bg2 = 0.0
-        var n = 0
-        for (p in night.pixels) {
-            if (LumaPlane.luma(p) < 60) {
-                rg += ((p shr 16) and 0xFF) - ((p shr 8) and 0xFF)
-                bg2 += (p and 0xFF) - ((p shr 8) and 0xFF)
-                n++
+        fun shadows(px: IntArray): Pair<Double, Double> {
+            var rg = 0.0
+            var bg2 = 0.0
+            var n = 0
+            for (p in px) {
+                if (LumaPlane.luma(p) < 60) {
+                    rg += ((p shr 16) and 0xFF) - ((p shr 8) and 0xFF)
+                    bg2 += (p and 0xFF) - ((p shr 8) and 0xFF)
+                    n++
+                }
             }
+            return rg / n to bg2 / n
         }
-        assertTrue("sombras R−G ${rg / n}, B−G ${bg2 / n}", abs(rg / n) < 6 && abs(bg2 / n) < 6)
+        val (rgTrue, bgTrue) = shadows(shoot(false))
+        val (rg, bg2) = shadows(shoot(true))
+        assertTrue("sombras R−G $rg (sin defecto $rgTrue), B−G $bg2 (sin defecto $bgTrue)",
+            abs(rg - rgTrue) < 3.5 && abs(bg2 - bgTrue) < 3.5)
+        // Rosa sería azul por encima del verde.
+        assertTrue("B−G $bg2", bg2 < 0)
     }
 
     @Test
