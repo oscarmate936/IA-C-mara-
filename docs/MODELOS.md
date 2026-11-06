@@ -72,8 +72,13 @@ Notas:
   selección incluida: 161/161 imágenes (YOLO11s, 975 detecciones; YOLOE, 375). Simulados en 16 bits: 8/8 y 7/7.
   YOLO11s de 8 bits (Honor): 57/58. YOLOE de 8 bits sigue sin pasar (22/50).
 - **Calor.** Con el móvil caliente la IA se reduce sola: moderado → todo más espaciado; grave → además fuera YOLOE,
-  el cuerpo y la estética, y las pruebas de aceleradores esperan a que se enfríe; crítico → solo caras, objetos,
-  ojos y luz. El visor lo avisa («Móvil muy caliente: IA reducida»).
+  el cuerpo y la estética; crítico → solo caras, objetos, ojos y luz. El visor lo avisa («Móvil muy caliente: IA
+  reducida»). Con calor se sigue probando el NPU (pasar un modelo al NPU es justo lo que enfría el móvil) pero no la
+  GPU (se deja para el próximo arranque); en temperatura crítica las pruebas esperan.
+- **Orden y duración de las pruebas.** Primero lo que más procesador gasta por segundo (YOLO26n, ~4 veces por
+  segundo, y las caras), luego la saliencia, YOLOE, la estética y CLIP. Si el NPU ya tarda menos del 30 % que el
+  procesador, la GPU no se prueba (en el S22+ nunca ganó). Un modelo que no se está usando (p. ej. YOLOE con calor)
+  no bloquea la cola: espera como mucho 30 s una imagen y deja pasar a los demás.
 - **Caras: comprobación cruzada.** Una cara de YuNet cuenta si es clara (≥ 0,75 de día, ≥ 0,8 con poca luz), si la
   confirman los 478 puntos de la cara o si está en la cabeza de una persona clara del detector de objetos (≥ 0,55 de
   día, ≥ 0,65 de noche: en un grupo, las caras pequeñas no las ven los 478 puntos, pero cada una está en su persona).

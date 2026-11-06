@@ -76,7 +76,7 @@ class PerceptionAnalyzer(
 
     // Aceleración (NPU/GPU) con vuelta al procesador normal.
     private val acceleratorStore = AcceleratorStore.get(appContext)
-    private val accelerator = Accelerator(acceleratorStore).also { it.isHot = { hot } }
+    private val accelerator = Accelerator(acceleratorStore).also { it.heat = { if (critical) 2 else if (hot) 1 else 0 } }
     @Volatile private var foreground = false
     @Volatile private var closedModels = false
 
@@ -211,7 +211,7 @@ class PerceptionAnalyzer(
 
     /**
      * Prueba en segundo plano el NPU y la GPU con cada modelo (o activa lo que ya funcionó antes).
-     * Primero los más lentos en el procesador, que son los que más ganan.
+     * Primero los que más procesador gastan por segundo, que son los que más ganan.
      */
     private fun startAcceleration() {
         val detections = { a: Any, b: Any -> OutputCheck.sameDetections(a, b) }
@@ -224,17 +224,8 @@ class PerceptionAnalyzer(
         }
         val explainDetections = { a: Any, b: Any -> OutputCheck.explainDetections(a, b) }
         val explainSimilarity = { a: Any, b: Any -> OutputCheck.explainSimilarity(a, b) }
-        saliencyModel?.let {
-            accelerator.optimize(
-                Accelerator.Job(
-                    it, { a, b -> OutputCheck.similar(a, b, 0.95f) }, informative = { out -> OutputCheck.hasSalience(out) },
-                    explain = explainSimilarity, onDone = accelerated(saliencyClock),
-                ),
-            )
-        }
-        yoloeModel?.let {
-            accelerator.optimize(Accelerator.Job(it, detections, informative = hasDetections, explain = explainDetections, onDone = accelerated(yoloeClock)))
-        }
+        // Primero lo que más procesador gasta por segundo: YOLO26n (~4 veces por segundo) y las caras (casi
+        // cada fotograma); luego la saliencia y YOLOE (lentos pero menos frecuentes).
         yoloModel?.let { model ->
             accelerator.optimize(
                 Accelerator.Job(model, detections, informative = hasDetections, explain = explainDetections) { backend, ms ->
@@ -250,6 +241,17 @@ class PerceptionAnalyzer(
                     explain = { a, b -> OutputCheck.explainFaces(a, b) }, onDone = accelerated(faceClock),
                 ),
             )
+        }
+        saliencyModel?.let {
+            accelerator.optimize(
+                Accelerator.Job(
+                    it, { a, b -> OutputCheck.similar(a, b, 0.95f) }, informative = { out -> OutputCheck.hasSalience(out) },
+                    explain = explainSimilarity, onDone = accelerated(saliencyClock),
+                ),
+            )
+        }
+        yoloeModel?.let {
+            accelerator.optimize(Accelerator.Job(it, detections, informative = hasDetections, explain = explainDetections, onDone = accelerated(yoloeClock)))
         }
         aestheticModel?.let {
             accelerator.optimize(

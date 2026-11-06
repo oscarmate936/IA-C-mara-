@@ -257,8 +257,11 @@ object Sessions {
 class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
     @Volatile private var closed = false
 
-    /** El móvil está muy caliente: las pruebas nuevas esperan (cada una ejecuta el modelo muchas veces). */
-    @Volatile var isHot: () -> Boolean = { false }
+    /**
+     * Calor: 1 = caliente (se prueba solo el NPU: pasar un modelo al NPU es justo lo que enfría el móvil;
+     * la GPU casi nunca gana y calienta), 2 = crítico (las pruebas esperan a que se enfríe).
+     */
+    @Volatile var heat: () -> Int = { 0 }
 
     /** Mientras se mide la velocidad, el visor pausa los demás modelos para que la comparación sea justa. */
     val measuring: Boolean get() = measuringFlag && !closed
@@ -353,8 +356,8 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
             store.markBroken(m.key, remembered, describe(session.exceptionOrNull()))
         }
 
-        // Con el móvil muy caliente, las pruebas esperan a que se enfríe.
-        while (isHot() && !closed) Thread.sleep(HOT_WAIT_MS)
+        // Con el móvil en temperatura crítica, las pruebas esperan a que se enfríe.
+        while (heat() >= 2 && !closed) Thread.sleep(HOT_WAIT_MS)
         if (closed) return false
 
         // Primera vez: una imagen real con la que se pueda comparar, y su referencia en el procesador.
@@ -366,6 +369,8 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
         var bestMs = cpuMs
         // El NPU normal se pudo ejecutar (aunque diera otro resultado): entonces admite coma flotante.
         var npuRuns = false
+        // La GPU se dejó para otro momento por el calor.
+        var gpuDeferred = false
         for (backend in listOf(Backend.NPU, Backend.NPU_INT8, Backend.GPU)) {
             if (closed) break
             if (store.isBroken(m.key, backend)) {
@@ -375,6 +380,13 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
             if (backend in job.skip) continue
             // La versión de 8 bits es para los NPU sin coma flotante: si el normal funciona, sobra.
             if (backend == Backend.NPU_INT8 && (npuRuns || !m.hasInt8)) continue
+            // La GPU solo se prueba si el NPU no va ya muy rápido (en el S22+ la GPU nunca ganó: más lenta que
+            // el procesador) ni con el móvil caliente: cada prueba ejecuta el modelo muchas veces.
+            if (backend == Backend.GPU && best != null && bestMs <= cpuMs * NPU_GOOD_ENOUGH) continue
+            if (backend == Backend.GPU && heat() >= 1) {
+                gpuDeferred = true
+                continue
+            }
             probingNow = "${m.key} ${backend.label}"
             val result = runCatching {
                 store.guarded(m.key, backend) {
@@ -421,7 +433,9 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
             finish(chosen.first, bestMs)
         } else {
             chosen?.second?.close()
-            if (!closed) store.choose(m.key, Backend.CPU)
+            // Si la GPU quedó sin probar por el calor, no se da el procesador por definitivo: en el próximo
+            // arranque (con el móvil más frío) se vuelve a intentar.
+            if (!closed && !gpuDeferred) store.choose(m.key, Backend.CPU)
             finish(Backend.CPU, cpuMs)
         }
         return false
@@ -513,7 +527,7 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
 
     private companion object {
         const val TAG = "Aceleracion"
-        const val SAMPLE_TIMEOUT_MS = 120_000L
+        const val SAMPLE_TIMEOUT_MS = 30_000L
 
         /** Motivo de descarte cuando el acelerador funciona pero no da lo mismo que el procesador. */
         const val MISMATCH = "resultado distinto del procesador normal"
@@ -522,7 +536,10 @@ class Accelerator(private val store: AcceleratorStore) : AutoCloseable {
         const val INFORMATIVE_TIMEOUT_MS = 25_000L
 
         /** Veces que un modelo vuelve a la cola esperando una imagen útil (en total ~2,5 min). */
-        const val MAX_ATTEMPTS = 6
+        const val MAX_ATTEMPTS = 12
+
+        /** Si el NPU tarda esta parte del procesador o menos, no merece la pena probar la GPU. */
+        const val NPU_GOOD_ENOUGH = 0.3f
 
         /** Cada cuánto se vuelve a mirar si el móvil se ha enfriado. */
         const val HOT_WAIT_MS = 10_000L
